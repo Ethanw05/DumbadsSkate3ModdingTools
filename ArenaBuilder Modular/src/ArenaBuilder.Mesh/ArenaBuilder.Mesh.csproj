@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ArenaBuilder.Mesh</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ArenaBuilder.Core\ArenaBuilder.Core.csproj" />
+    <ProjectReference Include="..\ArenaBuilder.Glb\ArenaBuilder.Glb.csproj" />
+  </ItemGroup>
+
+</Project>

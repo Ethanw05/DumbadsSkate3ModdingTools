@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ArenaBuilder.Glb</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ArenaBuilder.Collision\ArenaBuilder.Collision.csproj" />
+    <ProjectReference Include="..\ArenaBuilder.NavPower\ArenaBuilder.NavPower.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
+  </ItemGroup>
+
+</Project>
+

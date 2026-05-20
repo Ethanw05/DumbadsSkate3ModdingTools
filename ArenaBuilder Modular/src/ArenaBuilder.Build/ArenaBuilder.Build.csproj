@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ArenaBuilder.Build</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ArenaBuilder.Collision\ArenaBuilder.Collision.csproj" />
+    <ProjectReference Include="..\ArenaBuilder.Core\ArenaBuilder.Core.csproj" />
+    <ProjectReference Include="..\ArenaBuilder.NavPower\ArenaBuilder.NavPower.csproj" />
+    <ProjectReference Include="..\ArenaBuilder.Glb\ArenaBuilder.Glb.csproj" />
+    <ProjectReference Include="..\ArenaBuilder.Mesh\ArenaBuilder.Mesh.csproj" />
+    <ProjectReference Include="..\ArenaBuilder.Texture\ArenaBuilder.Texture.csproj" />
+    <ProjectReference Include="..\ArenaBuilder.WorldPainter\ArenaBuilder.WorldPainter.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
+  </ItemGroup>
+
+</Project>

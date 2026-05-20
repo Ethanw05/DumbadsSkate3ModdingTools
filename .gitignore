@@ -1,0 +1,27 @@
+# This repo only tracks three folders at the root:
+#   ArenaBuilder Modular/
+#   ChallengeEditor/
+#   DlcBuilder.Core/
+
+# Exclude everything at the repo root by default.
+/*
+
+# Re-include the three target folders.
+!/ArenaBuilder Modular/
+!/ChallengeEditor/
+!/DlcBuilder.Core/
+
+# Re-include this file so the rules ship with the repo.
+!/.gitignore
+
+# Inside the included folders, drop all build outputs.
+**/bin/
+**/obj/
+
+# Exception: keep ArenaBuilder.WinForms/bin/Debug/net8.0-windows verbatim.
+# Each ancestor has to be re-included, then siblings re-excluded.
+!/ArenaBuilder Modular/src/ArenaBuilder.WinForms/bin/
+/ArenaBuilder Modular/src/ArenaBuilder.WinForms/bin/*
+!/ArenaBuilder Modular/src/ArenaBuilder.WinForms/bin/Debug/
+/ArenaBuilder Modular/src/ArenaBuilder.WinForms/bin/Debug/*
+!/ArenaBuilder Modular/src/ArenaBuilder.WinForms/bin/Debug/net8.0-windows/

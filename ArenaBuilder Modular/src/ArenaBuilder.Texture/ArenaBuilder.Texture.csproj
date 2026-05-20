@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ArenaBuilder.Texture</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ArenaBuilder.Core\ArenaBuilder.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BCnEncoder.Net.ImageSharp" Version="1.1.2" />
+    <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
+    <!-- xxHash for non-cryptographic content keys (texture dedup cache).
+         ~10-20x faster than SHA256 for multi-MB texture payloads; we only
+         need collision resistance for an in-process dictionary key, not
+         any security property. -->
+    <PackageReference Include="System.IO.Hashing" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

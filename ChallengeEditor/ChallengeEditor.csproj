@@ -1,0 +1,85 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ChallengeEditor</RootNamespace>
+    <AssemblyName>ChallengeEditor</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- Single-file + RID live only in Properties/PublishProfiles/Portable.pubxml
+         so `dotnet build` stays in net9.0-windows without a fat win-x64 tree. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Veldrid" Version="4.9.0" />
+    <PackageReference Include="Veldrid.SDL2" Version="4.9.0" />
+    <PackageReference Include="Veldrid.StartupUtilities" Version="4.9.0" />
+    <!-- ImGui.NET 1.91.6.1 ships the docking branch of cimgui (docking enabled by default).
+         The upstream Veldrid.ImGui package targets ImGui ~1.72 (pre-KeyMap-removal) and
+         would crash at startup against the 1.91 binding — we vendor a modern renderer
+         in Rendering/ImGuiRenderer.cs instead. -->
+    <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
+    <PackageReference Include="Veldrid.SPIRV" Version="1.0.15" />
+    <!-- ImageSharp decodes the base-color PNG/JPEG bytes embedded in the
+         .sk8 file's binary section into raw RGBA pixels Veldrid can upload.
+         3.1.11 clears the GHSA-rxmq-m78w-7wmc advisory that 3.1.7 (transitive
+         via ArenaBuilder.Texture's BCnEncoder.Net.ImageSharp) carries. -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DlcBuilder.Core\DlcBuilder.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Psg\" />
+  </ItemGroup>
+
+  <!-- Strip non-win-x64 native runtime folders from build output (we don't ship Linux/macOS/x86). -->
+  <Target Name="StripUnusedRuntimes" AfterTargets="Build">
+    <ItemGroup>
+      <_UnusedRuntimes Include="$(OutputPath)runtimes\linux-x64\**\*" />
+      <_UnusedRuntimes Include="$(OutputPath)runtimes\linux-arm\**\*" />
+      <_UnusedRuntimes Include="$(OutputPath)runtimes\linux-arm64\**\*" />
+      <_UnusedRuntimes Include="$(OutputPath)runtimes\linux-musl-x64\**\*" />
+      <_UnusedRuntimes Include="$(OutputPath)runtimes\osx\**\*" />
+      <_UnusedRuntimes Include="$(OutputPath)runtimes\osx-x64\**\*" />
+      <_UnusedRuntimes Include="$(OutputPath)runtimes\osx-arm64\**\*" />
+      <_UnusedRuntimes Include="$(OutputPath)runtimes\win-x86\**\*" />
+      <_UnusedRuntimes Include="$(OutputPath)runtimes\win-arm\**\*" />
+      <_UnusedRuntimes Include="$(OutputPath)runtimes\win-arm64\**\*" />
+      <_UnusedRuntimeDirs Include="$(OutputPath)runtimes\linux-x64;$(OutputPath)runtimes\linux-arm;$(OutputPath)runtimes\linux-arm64;$(OutputPath)runtimes\linux-musl-x64;$(OutputPath)runtimes\osx;$(OutputPath)runtimes\osx-x64;$(OutputPath)runtimes\osx-arm64;$(OutputPath)runtimes\win-x86;$(OutputPath)runtimes\win-arm;$(OutputPath)runtimes\win-arm64" />
+    </ItemGroup>
+    <Delete Files="@(_UnusedRuntimes)" />
+    <RemoveDir Directories="@(_UnusedRuntimeDirs)" />
+  </Target>
+
+  <!-- Keep portable single-file publish output clean. -->
+  <Target Name="StripPublishSymbolsAndDocs" AfterTargets="Publish">
+    <ItemGroup>
+      <_PublishDebugArtifacts Include="$(PublishDir)*.pdb" />
+      <_PublishDebugArtifacts Include="$(PublishDir)*.xml" />
+    </ItemGroup>
+    <Delete Files="@(_PublishDebugArtifacts)" />
+  </Target>
+
+  <Target Name="StripPublishNonExeFiles" AfterTargets="StripPublishSymbolsAndDocs">
+    <ItemGroup>
+      <_PublishExtra Include="$(PublishDir)*.*" />
+      <_PublishExtra Remove="$(PublishDir)$(AssemblyName).exe" />
+    </ItemGroup>
+    <Delete Files="@(_PublishExtra)" ContinueOnError="true" />
+  </Target>
+
+  <!-- Publish still materializes bin\...\win-x64\ with the full RID layout — remove it. -->
+  <Target Name="RemovePublishWin64Scratch" AfterTargets="Publish">
+    <PropertyGroup>
+      <_Win64Scratch>$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64</_Win64Scratch>
+    </PropertyGroup>
+    <RemoveDir Directories="$(_Win64Scratch)" Condition="Exists('$(_Win64Scratch)')" />
+  </Target>
+</Project>

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ArenaBuilder.WorldPainter</RootNamespace>
+    <Description>WorldPainter paint grid, worldpainter.bin I/O, quadtree build, and cSim PSG export helpers.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ArenaBuilder.Core\ArenaBuilder.Core.csproj" />
+    <ProjectReference Include="..\ArenaBuilder.Glb\ArenaBuilder.Glb.csproj" />
+  </ItemGroup>
+
+</Project>

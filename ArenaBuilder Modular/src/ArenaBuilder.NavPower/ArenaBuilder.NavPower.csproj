@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ArenaBuilder.NavPower</RootNamespace>
+    <Description>Skate-style NavPower BabelFlux + Pegasus tNavPowerData emission (legacy v23); KD build ported from NavPower bfxKDTree.cpp.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ArenaBuilder.Core\ArenaBuilder.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DotRecast.Recast" Version="*" />
+  </ItemGroup>
+
+</Project>

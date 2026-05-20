@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DlcBuilder</RootNamespace>
+    <AssemblyName>DlcBuilder.Core</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1570</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ArenaBuilder.Core supplies the RW4 PS3 arena writer (GenericArenaWriter, PsgArenaSpec)
+         and the Lookup8 hash. ArenaBuilder.Collision supplies the ClusteredMesh pipeline used
+         by the OTS PSG body. Both target net8.0 but net9.0 consumes them fine. -->
+    <ProjectReference Include="..\ArenaBuilder Modular\src\ArenaBuilder.Core\ArenaBuilder.Core.csproj" />
+    <ProjectReference Include="..\ArenaBuilder Modular\src\ArenaBuilder.Collision\ArenaBuilder.Collision.csproj" />
+    <ProjectReference Include="..\ArenaBuilder Modular\src\ArenaBuilder.Texture\ArenaBuilder.Texture.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 12 mission stub template bytes (Pres/Sim/Tex × pmm/psm/pss/pst). Per-map and per-OTS
+         mission folders copy these into <output>/content/missions/<name>/<name>_<suffix>.
+         MissionStubsWriter throws if any are missing; OtsMissionFolderWriter silently skips. -->
+    <EmbeddedResource Include="lib\mission_template\**\*" />
+
+    <!-- External packer binaries that BigFilePacker / OtsPsfPacker shell out to.
+         bigfile.exe wraps the staging tree into a single .big; Stream File Tool
+         packs each per-OTS cSim_Global folder into cSim_Global.psf. -->
+    <EmbeddedResource Include="lib\bigfile.exe" />
+    <EmbeddedResource Include="lib\Stream File Tool.exe" />
+    <None Include="lib\bigfile.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>bigfile.exe</Link>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </None>
+    <None Include="lib\Stream File Tool.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Stream File Tool.exe</Link>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </None>
+  </ItemGroup>
+</Project>

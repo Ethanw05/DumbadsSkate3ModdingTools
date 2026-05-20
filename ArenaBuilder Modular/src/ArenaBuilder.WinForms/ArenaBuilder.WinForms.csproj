@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ArenaBuilder.WinForms</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\\ArenaBuilder.Collision\\ArenaBuilder.Collision.csproj" />
+    <ProjectReference Include="..\\ArenaBuilder.Core\\ArenaBuilder.Core.csproj" />
+    <ProjectReference Include="..\\ArenaBuilder.Build\\ArenaBuilder.Build.csproj" />
+    <ProjectReference Include="..\\ArenaBuilder.WorldPainter\\ArenaBuilder.WorldPainter.csproj" />
+    <ProjectReference Include="..\\ArenaBuilder.Glb\\ArenaBuilder.Glb.csproj" />
+    <ProjectReference Include="..\\ArenaBuilder.Mesh\\ArenaBuilder.Mesh.csproj" />
+    <ProjectReference Include="..\\ArenaBuilder.Texture\\ArenaBuilder.Texture.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTK.GLControl" Version="4.0.2" />
+  </ItemGroup>
+
+</Project>
+

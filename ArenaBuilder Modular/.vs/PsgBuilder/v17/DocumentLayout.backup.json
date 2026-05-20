@@ -1,0 +1,155 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\ethan\\Desktop\\PsgTools\\CursorWorkSpace\\PsgBuilder Modular\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\ethan\\Desktop\\Export\\Corrales Park\\blenrose_materials.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\ethan\\Desktop\\Export\\Court\\blenrose_materials.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\ethan\\Desktop\\Export\\Arsenal Park.blend\\blenrose_materials.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{FDC1F948-CA1E-4140-9BF6-4A35352A238F}|src\\PsgBuilder.Build\\PsgBuilder.Build.csproj|c:\\users\\ethan\\desktop\\psgtools\\cursorworkspace\\psgbuilder modular\\src\\psgbuilder.build\\blenrosematerialsdb.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{FDC1F948-CA1E-4140-9BF6-4A35352A238F}|src\\PsgBuilder.Build\\PsgBuilder.Build.csproj|solutionrelative:src\\psgbuilder.build\\blenrosematerialsdb.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{E368E97E-C7DA-4923-8E42-C6180FD398BE}|src\\PsgBuilder.Core\\PsgBuilder.Core.csproj|c:\\users\\ethan\\desktop\\psgtools\\cursorworkspace\\psgbuilder modular\\src\\psgbuilder.core\\psgformat\\genericarenawriter.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{E368E97E-C7DA-4923-8E42-C6180FD398BE}|src\\PsgBuilder.Core\\PsgBuilder.Core.csproj|solutionrelative:src\\psgbuilder.core\\psgformat\\genericarenawriter.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{2C4E5F5D-0A5F-4D4B-8E6E-0D0B8D0C1E0E}|src\\PsgBuilder.WinForms\\PsgBuilder.WinForms.csproj|c:\\users\\ethan\\desktop\\psgtools\\cursorworkspace\\psgbuilder modular\\src\\psgbuilder.winforms\\mainform.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{2C4E5F5D-0A5F-4D4B-8E6E-0D0B8D0C1E0E}|src\\PsgBuilder.WinForms\\PsgBuilder.WinForms.csproj|solutionrelative:src\\psgbuilder.winforms\\mainform.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\ethan\\Desktop\\Export\\gqbzYgmDFAzxIDPRxAZt.blend\\blenrose_materials.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\ethan\\Desktop\\Export\\GTA SA Los Santos Map Skate 3.blend\\blenrose_materials.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\ethan\\Desktop\\Export\\AlphaTest\\blenrose_materials.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 0,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "blenrose_materials.json",
+              "DocumentMoniker": "C:\\Users\\ethan\\Desktop\\Export\\Corrales Park\\blenrose_materials.json",
+              "RelativeDocumentMoniker": "..\\..\\..\\Export\\Corrales Park\\blenrose_materials.json",
+              "ToolTip": "C:\\Users\\ethan\\Desktop\\Export\\Corrales Park\\blenrose_materials.json",
+              "RelativeToolTip": "..\\..\\..\\Export\\Corrales Park\\blenrose_materials.json",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2026-03-11T07:35:13.578Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "blenrose_materials.json",
+              "DocumentMoniker": "C:\\Users\\ethan\\Desktop\\Export\\Court\\blenrose_materials.json",
+              "RelativeDocumentMoniker": "..\\..\\..\\Export\\Court\\blenrose_materials.json",
+              "ToolTip": "C:\\Users\\ethan\\Desktop\\Export\\Court\\blenrose_materials.json",
+              "RelativeToolTip": "..\\..\\..\\Export\\Court\\blenrose_materials.json",
+              "ViewState": "AgIAAA8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2026-03-11T00:15:06.082Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "blenrose_materials.json",
+              "DocumentMoniker": "C:\\Users\\ethan\\Desktop\\Export\\Arsenal Park.blend\\blenrose_materials.json",
+              "RelativeDocumentMoniker": "..\\..\\..\\Export\\Arsenal Park.blend\\blenrose_materials.json",
+              "ToolTip": "C:\\Users\\ethan\\Desktop\\Export\\Arsenal Park.blend\\blenrose_materials.json",
+              "RelativeToolTip": "..\\..\\..\\Export\\Arsenal Park.blend\\blenrose_materials.json",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2026-03-06T11:10:09.426Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "BlenroseMaterialsDb.cs",
+              "DocumentMoniker": "C:\\Users\\ethan\\Desktop\\PsgTools\\CursorWorkSpace\\PsgBuilder Modular\\src\\PsgBuilder.Build\\BlenroseMaterialsDb.cs",
+              "RelativeDocumentMoniker": "src\\PsgBuilder.Build\\BlenroseMaterialsDb.cs",
+              "ToolTip": "C:\\Users\\ethan\\Desktop\\PsgTools\\CursorWorkSpace\\PsgBuilder Modular\\src\\PsgBuilder.Build\\BlenroseMaterialsDb.cs",
+              "RelativeToolTip": "src\\PsgBuilder.Build\\BlenroseMaterialsDb.cs",
+              "ViewState": "AgIAAAMAAAAAAAAAAAAAACIAAABiAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-03-04T10:02:03.436Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "MainForm.cs",
+              "DocumentMoniker": "C:\\Users\\ethan\\Desktop\\PsgTools\\CursorWorkSpace\\PsgBuilder Modular\\src\\PsgBuilder.WinForms\\MainForm.cs",
+              "RelativeDocumentMoniker": "src\\PsgBuilder.WinForms\\MainForm.cs",
+              "ToolTip": "C:\\Users\\ethan\\Desktop\\PsgTools\\CursorWorkSpace\\PsgBuilder Modular\\src\\PsgBuilder.WinForms\\MainForm.cs",
+              "RelativeToolTip": "src\\PsgBuilder.WinForms\\MainForm.cs",
+              "ViewState": "AgIAAFoAAAAAAAAAAAAAAKkAAAAnAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-03-04T01:12:54.912Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "blenrose_materials.json",
+              "DocumentMoniker": "C:\\Users\\ethan\\Desktop\\Export\\gqbzYgmDFAzxIDPRxAZt.blend\\blenrose_materials.json",
+              "RelativeDocumentMoniker": "..\\..\\..\\Export\\gqbzYgmDFAzxIDPRxAZt.blend\\blenrose_materials.json",
+              "ToolTip": "C:\\Users\\ethan\\Desktop\\Export\\gqbzYgmDFAzxIDPRxAZt.blend\\blenrose_materials.json",
+              "RelativeToolTip": "..\\..\\..\\Export\\gqbzYgmDFAzxIDPRxAZt.blend\\blenrose_materials.json",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAgAAAASAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2026-03-03T03:01:00.11Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 7,
+              "Title": "blenrose_materials.json",
+              "DocumentMoniker": "C:\\Users\\ethan\\Desktop\\Export\\GTA SA Los Santos Map Skate 3.blend\\blenrose_materials.json",
+              "RelativeDocumentMoniker": "..\\..\\..\\Export\\GTA SA Los Santos Map Skate 3.blend\\blenrose_materials.json",
+              "ToolTip": "C:\\Users\\ethan\\Desktop\\Export\\GTA SA Los Santos Map Skate 3.blend\\blenrose_materials.json",
+              "RelativeToolTip": "..\\..\\..\\Export\\GTA SA Los Santos Map Skate 3.blend\\blenrose_materials.json",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAMAAAAQAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2026-02-27T10:02:07.135Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 8,
+              "Title": "blenrose_materials.json",
+              "DocumentMoniker": "C:\\Users\\ethan\\Desktop\\Export\\AlphaTest\\blenrose_materials.json",
+              "RelativeDocumentMoniker": "..\\..\\..\\Export\\AlphaTest\\blenrose_materials.json",
+              "ToolTip": "C:\\Users\\ethan\\Desktop\\Export\\AlphaTest\\blenrose_materials.json",
+              "RelativeToolTip": "..\\..\\..\\Export\\AlphaTest\\blenrose_materials.json",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2026-02-27T07:35:02.079Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "GenericArenaWriter.cs",
+              "DocumentMoniker": "C:\\Users\\ethan\\Desktop\\PsgTools\\CursorWorkSpace\\PsgBuilder Modular\\src\\PsgBuilder.Core\\PsgFormat\\GenericArenaWriter.cs",
+              "RelativeDocumentMoniker": "src\\PsgBuilder.Core\\PsgFormat\\GenericArenaWriter.cs",
+              "ToolTip": "C:\\Users\\ethan\\Desktop\\PsgTools\\CursorWorkSpace\\PsgBuilder Modular\\src\\PsgBuilder.Core\\PsgFormat\\GenericArenaWriter.cs",
+              "RelativeToolTip": "src\\PsgBuilder.Core\\PsgFormat\\GenericArenaWriter.cs",
+              "ViewState": "AgIAAOUBAAAAAAAAAAAiwBcCAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-02-21T06:57:39.323Z"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
