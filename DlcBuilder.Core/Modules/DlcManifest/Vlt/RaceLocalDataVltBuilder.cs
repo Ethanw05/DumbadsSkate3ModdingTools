@@ -166,10 +166,15 @@ public static class RaceLocalDataVltBuilder
             }
         }));
 
-        // VisualIndicators — empty array. Race gates get their archway from
-        // the per-gate RibbonInstance (standardrace) on challenge_race_gates,
-        // oriented by the trigger volume's m_TransformMatrix. No per-gate
-        // chevron VisualIndicator entries needed.
+        // VisualIndicators[] — left empty. The locator-driven path
+        // (`cVisualIndicatorGroup::AddLocationIndicator @ 0x82b78038`) only
+        // produces a decorative chevron-or-spline indicator on top of
+        // whatever the trigger-volume-driven path is already drawing. We
+        // confirmed empirically that emitting a single finish-only VI entry
+        // here just stacks a second visual on the last gate without
+        // affecting race-end logic. The "is this the finish gate?"
+        // determination happens in the race state-graph (Lua) which we don't
+        // ship — see [[race-finish-investigation]] in working notes.
         uint visualIndicatorsArrayOff = bin.AddBlob(VltBinHelpers.BuildEmptyArrayHeader(80));
 
         // Start-location / end-camera strings — `<challengeKey>_startlocator`
@@ -184,43 +189,13 @@ public static class RaceLocalDataVltBuilder
         // races.
         uint audioPlayerQuitOff = bin.AddBlob(Convert.FromHexString("0000000F06A90000"));
 
-        // IntroPresentationEvents — 1-element tChallengePresentationEvent
-        // array. Layout per IDA (struct is 12 B but vault stride is 16 B):
-        //   +0x00 eventType        eChallengePresentationEventType u32  — stock = 5
-        //   +0x04 eventTypeArg1    const char*                    u32  — PtrN-fixed
-        //   +0x08 eventTypeArg2    const char*                    u32  — PtrN-fixed
-        //   +0x0C pad              4 B zero
-        //
-        // CRITICAL: arg1 and arg2 are CHAR* fields — they MUST get PtrN
-        // fixups. Earlier this builder wrote stock retail's literal bytes
-        // (`00000005 000000D0 00000008 00000000`) without any fixups, so at
-        // runtime arg1 stayed as raw integer 0xD0 and arg2 as raw 0x8. The
-        // race-start state-graph parser then read arg2 as a string pointer
-        // and dereferenced 0x8 → AV. Stock dwtn has explicit PtrN entries
-        // (e.g. `fixupOff=0x0B38 ptr=0xD0` for arg1, `fixupOff=0x0B3C
-        // ptr=0x8` for arg2) so the engine sees absolute pointers at
-        // runtime, not raw bin offsets.
-        //
-        // We mirror stock's targets — arg1 → bin offset 0xD0 (whatever
-        // string lives there in our bin), arg2 → bin offset 0x8. Both are
-        // valid C strings in our pool (template HALID at 0x8 in particular),
-        // so the engine reads them as opaque text without crashing.
-        uint introPresentationEventsArrOff = bin.AddBlob(VltPayload.Build(w =>
-        {
-            w.WriteBE((ushort)1);       // count
-            w.WriteBE((ushort)1);       // capacity
-            w.WriteBE((ushort)16);      // typeSize (tChallengePresentationEvent vault stride)
-            w.WriteBE((ushort)0);       // align
-            w.WriteBE(0x00000005u);     // +0x00 eventType
-            w.WriteBE(0x000000D0u);     // +0x04 eventTypeArg1 — PtrN-fixed below
-            w.WriteBE(0x00000008u);     // +0x08 eventTypeArg2 — PtrN-fixed below
-            w.WriteBE(0u);              // +0x0C pad
-        }));
-        // PtrN fixups for the two char* fields in element 0. Element starts
-        // at `+8` past the array header; arg1 is at element+4, arg2 at
-        // element+8.
-        binFixups.Add((introPresentationEventsArrOff + 8u + 4u, 0xD0u));
-        binFixups.Add((introPresentationEventsArrOff + 8u + 8u, 0x08u));
+        // IntroPresentationEvents — empty array. Author requested no cutscenes
+        // on this DLC; the intro presentation events drive the pre-race
+        // camera fly-in and HUD callouts. Empty array = engine skips the
+        // intro sequence entirely. Stock dlc_race_dwgh_01's instance row
+        // doesn't carry this attribute either; we only had it because race_dwtn_01
+        // (the single-player template we copied from) shipped a 1-element array.
+        uint introPresentationEventsArrOff = bin.AddBlob(VltBinHelpers.BuildEmptyArrayHeader(16));
 
         var instanceAttrs = new List<CollectionAttributeSpec>(10);
         instanceAttrs.Add(VltAttribute.PointerNoFixup("AudioPlayerQuitChallenge", "Sk8::Challenge::tSpeechInfo", audioPlayerQuitOff, 0x00));
@@ -228,7 +203,8 @@ public static class RaceLocalDataVltBuilder
         instanceAttrs.Add(VltAttribute.Inline("Challenge_Index", "EA::Reflection::UInt8", 0x01000000u));
         // IntroPresentationEvents: non-typed array → NF=0x02. Element struct
         // tChallengePresentationEvent is 12 B (eventType + 2 char*) with 4 B
-        // vault-stride pad — array stride = 16 (matches retail).
+        // vault-stride pad — array stride = 16 (matches retail). Shipped
+        // empty to suppress the pre-race intro presentation.
         instanceAttrs.Add(VltAttribute.PointerNoFixup("IntroPresentationEvents", "Sk8::Challenge::tChallengePresentationEvent", introPresentationEventsArrOff, 0x02));
         instanceAttrs.Add(VltAttribute.Inline("OnlineEndCameraLocation", "Sk8::Challenge::tLocationID", onlineEndCamStrOff));
         // RaceGateSkipable — `0x01000000` true on stock retail instance rows.
@@ -274,7 +250,7 @@ public static class RaceLocalDataVltBuilder
         // challenge_race_legs rows
         // ─────────────────────────────────────────────────────────────────
         AppendRaceLegsRows(spec, frameworkKey, raceFamilyKey, challengeKey,
-            legList, gateList, legSplitNameOffsets, bin, collections, binFixups);
+            legList, gateList, gateNameOffsets, legSplitNameOffsets, bin, collections, binFixups);
 
         // ─────────────────────────────────────────────────────────────────
         // challenge_race_heats rows
@@ -396,6 +372,7 @@ public static class RaceLocalDataVltBuilder
         RaceChallengeSpec spec, string frameworkKey, string raceFamilyKey, string challengeKey,
         List<(int HeatIndex, RaceLegSpec Leg)> legList,
         List<(int LegIndex, RaceGateSpec Gate)> gateList,
+        uint[] gateNameOffsets,
         uint[][] legSplitNameOffsets,
         BinPoolBuilder bin,
         List<CollectionBlob> collections,
@@ -470,12 +447,54 @@ public static class RaceLocalDataVltBuilder
                 }
             }));
 
-            // SplitTimeTriggers[] — one per authored split trigger on this leg.
+            // SplitTimeTriggers[] — DLC race convention (verified vs
+            // `AttribDumpOut/dlc_race_dwgh_01/.../challenge_race_legs/Hash_95780E4C1CB73180.xml`):
+            // one entry per gate in the leg, each entry's tTriggerVolumeInstanceID
+            // = { gate's canonical name ptr, 0, gate's VolumeID }. Stock dwgh's
+            // 3-gate leg ships exactly this: SplitTimeTriggers[0..2] mirror
+            // Gates[0..2] by VolumeID.
+            //
+            // Why this matters: the user's race had Gates[] fully populated and
+            // gate-pass events firing for gates 1..N-1, but the LAST gate never
+            // triggered race-end. Stock single-player races (race_dwtn_01) and
+            // DLC races (dlc_race_dwgh_01) both publish the gate volumes through
+            // SplitTimeTriggers — that's the engine's "the LAST entry here ends
+            // the race" subscription. Without it the engine treats every gate
+            // as a regular checkpoint with no terminator.
+            //
+            // Author-supplied splits (when leg.SplitTimeTriggers is populated)
+            // STILL win — those reference world-painter volumes the user wants
+            // for additional timing checkpoints, and shouldn't be replaced.
             uint splitsArrayOff;
             var splits = leg.SplitTimeTriggers;
             if (splits.Count == 0)
             {
-                splitsArrayOff = bin.AddBlob(VltBinHelpers.BuildEmptyArrayHeader(16));
+                // Auto-populate from this leg's gates. Each entry mirrors the
+                // matching challenge_race_gates row's GateVolume struct: name ptr
+                // (PtrN-fixed to the canonical gate name) + pad + VolumeID.
+                int n = legGateRowIndices.Count;
+                uint arrOff = bin.AddBlob(VltPayload.Build(w =>
+                {
+                    w.WriteBE((ushort)n);
+                    w.WriteBE((ushort)n);
+                    w.WriteBE((ushort)16);
+                    w.WriteBE((ushort)0);
+                    foreach (int gi in legGateRowIndices)
+                    {
+                        ulong volumeId = RaceVolumeNaming.GateVolumeId(
+                            challengeKey, gi, gateList.Count, spec.Map.DistKey);
+                        w.WriteBE(0u);          // VolumeName ptr (PtrN-fixed)
+                        w.WriteBE(0u);          // padding
+                        w.WriteBE(volumeId);
+                    }
+                }));
+                int jj = 0;
+                foreach (int gi in legGateRowIndices)
+                {
+                    binFixups.Add((arrOff + 8u + (uint)jj * 16u, gateNameOffsets[gi]));
+                    jj++;
+                }
+                splitsArrayOff = arrOff;
             }
             else
             {
@@ -580,47 +599,25 @@ public static class RaceLocalDataVltBuilder
         // RandomBranches — empty.
         uint randomBranchesEmpty = bin.AddBlob(VltBinHelpers.BuildEmptyArrayHeader(24));
 
-        // NIS playback definitions — 64 B each. Retail stock `races` ships
-        // these with the leading u32 at +0x00 pointing into the bin pool
-        // (NIS-name string ref). Placeholder strings keep the engine's NIS
-        // resolver from crashing on cold start; the actual NIS playback only
-        // fires when the heat's instance row overrides the field.
-        uint flythroughName       = bin.AddString("default_flythrough");
-        uint flythroughOnlineName = bin.AddString("default_flythrough_online");
-        uint outroName            = bin.AddString("default_outro");
+        // NIS playback definitions — 64 B each, all three pointed at an empty
+        // string in the bin pool. Author requested no cutscenes; the engine's
+        // NIS resolver reads "" and skips playback. Stock dlc_dwgh_races does
+        // the same — its `NISFlythroughDefinition` / `…Online` reference bin
+        // offset 0x8 which holds the empty string. The `NISOutroDefinition`
+        // there points at a real "Sk3_Win_*" celebration; we point ours at ""
+        // so nothing plays at race end either.
+        uint nisEmptyName = bin.AddString(string.Empty);
+        uint nisFlythrough       = bin.AddBlob(BuildNisPlaybackDef64(nisEmptyName));
+        uint nisFlythroughOnline = bin.AddBlob(BuildNisPlaybackDef64(nisEmptyName));
+        uint nisOutro            = bin.AddBlob(BuildNisPlaybackDef64(nisEmptyName));
+        binFixups.Add((nisFlythrough,       nisEmptyName));
+        binFixups.Add((nisFlythroughOnline, nisEmptyName));
+        binFixups.Add((nisOutro,            nisEmptyName));
 
-        uint nisFlythrough       = bin.AddBlob(BuildNisPlaybackDef64(flythroughName));
-        uint nisFlythroughOnline = bin.AddBlob(BuildNisPlaybackDef64(flythroughOnlineName));
-        uint nisOutro            = bin.AddBlob(BuildNisPlaybackDef64(outroName));
-        binFixups.Add((nisFlythrough,       flythroughName));
-        binFixups.Add((nisFlythroughOnline, flythroughOnlineName));
-        binFixups.Add((nisOutro,            outroName));
-
-        // OnlineNISs — 5 text refs (each a 4-byte pointer to a bin string).
-        uint onlineNis0 = bin.AddString("default_online_nis_0");
-        uint onlineNis1 = bin.AddString("default_online_nis_1");
-        uint onlineNis2 = bin.AddString("default_online_nis_2");
-        uint onlineNis3 = bin.AddString("default_online_nis_3");
-        uint onlineNis4 = bin.AddString("default_online_nis_4");
-        uint onlineNisArray = bin.AddBlob(VltPayload.Build(w =>
-        {
-            w.WriteBE((ushort)5);
-            w.WriteBE((ushort)5);
-            w.WriteBE((ushort)4);
-            w.WriteBE((ushort)0);
-            w.WriteBE(onlineNis0);
-            w.WriteBE(onlineNis1);
-            w.WriteBE(onlineNis2);
-            w.WriteBE(onlineNis3);
-            w.WriteBE(onlineNis4);
-            w.WriteBE(0u);   // pad to 8B alignment after 5×4 = 20B → +4
-        }));
-        // PtrN fixups for each text-ref slot (after 8B header).
-        binFixups.Add((onlineNisArray + 8u +  0u, onlineNis0));
-        binFixups.Add((onlineNisArray + 8u +  4u, onlineNis1));
-        binFixups.Add((onlineNisArray + 8u +  8u, onlineNis2));
-        binFixups.Add((onlineNisArray + 8u + 12u, onlineNis3));
-        binFixups.Add((onlineNisArray + 8u + 16u, onlineNis4));
+        // OnlineNISs — empty array. Author requested no cutscenes. Stock
+        // dlc_dwgh_races also ships this as empty (verified in the family
+        // row dump). Element stride = 4 (Text refs).
+        uint onlineNisArray = bin.AddBlob(VltBinHelpers.BuildEmptyArrayHeader(4));
 
         // RaceSpeechCountdown / RaceSpeechStart — 8B tSpeechInfo each. Retail
         // values from stock `races`: countdown=0000002703850000, start=0000002703860000.
@@ -734,15 +731,17 @@ public static class RaceLocalDataVltBuilder
                 }
             }));
 
-            // Per-heat NIS placeholders. Retail race_dwgh_01 ships these as
-            // zero-filled 64B blobs with the leading u32 pointing at a bin
-            // string. We mirror the shape using per-heat default names.
-            uint heatFlythroughOnlineName = bin.AddString($"{challengeKey}_{hi}_flythrough_online");
-            uint heatOutroName            = bin.AddString($"{challengeKey}_{hi}_outro");
-            uint heatNisFlythroughOnline  = bin.AddBlob(BuildNisPlaybackDef64(heatFlythroughOnlineName));
-            uint heatNisOutro             = bin.AddBlob(BuildNisPlaybackDef64(heatOutroName));
-            binFixups.Add((heatNisFlythroughOnline, heatFlythroughOnlineName));
-            binFixups.Add((heatNisOutro,            heatOutroName));
+            // Per-heat NIS overrides — author requested no cutscenes. Both
+            // playback definitions reference an empty string in the bin pool
+            // so the engine's NIS resolver reads "" and skips playback.
+            // (`nisEmptyName` was already added above for the family-row
+            // defaults; AddString returns a fresh offset each call but the
+            // engine handles equivalent empty strings the same way.)
+            uint heatNisEmptyName         = bin.AddString(string.Empty);
+            uint heatNisFlythroughOnline  = bin.AddBlob(BuildNisPlaybackDef64(heatNisEmptyName));
+            uint heatNisOutro             = bin.AddBlob(BuildNisPlaybackDef64(heatNisEmptyName));
+            binFixups.Add((heatNisFlythroughOnline, heatNisEmptyName));
+            binFixups.Add((heatNisOutro,            heatNisEmptyName));
 
             uint heatStartLocStr = bin.AddString(
                 heat.StartPosition != null

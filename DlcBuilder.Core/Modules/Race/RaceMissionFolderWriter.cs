@@ -134,6 +134,10 @@ public static class RaceMissionFolderWriter
                 SubLocations: BuildRaceStartSpawnSlots(heatName, heatTransform)));
         }
 
+        // Per-gate VI locators (and the finish-only VI locator attempt) were
+        // both removed: each one surfaced an unwanted duplicate visual on
+        // top of the trigger-volume archway without affecting race-end logic.
+
         // End-camera locator (`<key>_endcamera`). The VLT's
         // `OnlineEndCameraLocation` resolves this name via
         // cLocationManager::FindLocation. Without a matching PSG entry the

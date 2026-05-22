@@ -74,12 +74,15 @@ public static class RaceFrameworkRacesRow
         // OnlineEndCameraLocation = "<challengeKey>_endcamera").
         uint emptyLocationStr = bin.AddString("");
 
-        // NIS playback definition string slots — stock dlc_dwgh_local_data_framework
-        // .bin uses shared celebration NIS names. These are base-game assets, not
-        // DLC-specific, so we ship the exact same strings.
-        uint nisOnlineOutroStr = bin.AddString("Online_Celeb_02");      // OnlineOutroNIS first 4B → bin offset
-        uint nisOnlineHash2Str = bin.AddString("Online_Celeb_03");      // Hash_C5078779…
-        uint nisOutroStr       = bin.AddString("Sk3_Win_Med_3_Stoked"); // OutroNIS
+        // NIS playback definition string slots — author requested NO cutscenes
+        // on this DLC. Pointing all three at an empty string in the bin pool
+        // makes the engine's NIS loader read "" and skip playback (this is the
+        // same mechanism stock uses for races that ship no celebration NIS —
+        // the heat-row default `NISOutroDefinition` points at bin offset 0x8
+        // which is an empty string in the .bin).
+        uint nisOnlineOutroStr = bin.AddString("");
+        uint nisOnlineHash2Str = bin.AddString("");
+        uint nisOutroStr       = bin.AddString("");
 
         // ── Inline blobs ───────────────────────────────────────────────────
 

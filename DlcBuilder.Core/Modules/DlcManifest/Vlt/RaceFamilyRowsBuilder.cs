@@ -165,22 +165,47 @@ public static class RaceFamilyRowsBuilder
         }));
         binFixups.Add((famPreloadAssetsOff + 8u, emptyPathStr));
 
-        // Hash_598056F37D38D27A: tCompetitorInfo[3]. Each entry is 8B
-        // (4B competitor id + 4B pad). Retail values from stock dump:
-        //   0x927, 0x937, 0x944
-        // These are skater asset ids — bin-pool offsets resolved at load.
-        // For DLC race we use the same trio so the AI competitor roster
-        // matches what stock `races` family schedules.
+        // Hash_598056F37D38D27A: tCompetitorInfo[3]. Each entry is 8B —
+        //   { u32 NameStrPtr, u32 pad }
+        // NameStrPtr is a bin-pool offset to an `ai_characters` row key string.
+        // The race state-graph (race_shared.vlt → triggerentercollision Lua)
+        // iterates this array and calls `sub_F23380` (strcmp) on each name
+        // against rows in the `ai_characters` collection (classKey
+        // 0xE57478F796EBC28C) to assemble the AI competitor roster for
+        // online death races.
+        //
+        // Earlier this builder wrote the LITERAL offsets `0x927 / 0x937 /
+        // 0x944` from a stock retail dump — those happen to be the offsets
+        // of "dennis_busenitz" / "mike_carroll" / "lucas_puig" in stock
+        // dlc_dwgh.bin (133 KB). Our challengebanks bin is ~2 KB so those
+        // offsets are past EOF; the engine reads raw 0x927 as a char* and
+        // strcmp's it against "chris_boykin", "m_street", ... → AV reading
+        // 0x927 the moment a player picks the race online (PPU
+        // load_thread crash). That's the crash signature we chased through
+        // the race-state-graph bytecode.
+        //
+        // Fix: add the three skater row-key strings to our bin pool and
+        // PtrN-fix each tCompetitorInfo.NameStrPtr slot to its offset.
+        // ai_characters/dennis_busenitz, mike_carroll, lucas_puig all exist
+        // in stock skatercollections — they don't need shipping with DLC.
+        uint comp1NameOff = bin.AddString("dennis_busenitz");
+        uint comp2NameOff = bin.AddString("mike_carroll");
+        uint comp3NameOff = bin.AddString("lucas_puig");
         uint famCompetitorsOff = bin.AddBlob(VltPayload.Build(w =>
         {
             w.WriteBE((ushort)3);
             w.WriteBE((ushort)3);
             w.WriteBE((ushort)8);   // tCompetitorInfo stride = 8B
             w.WriteBE((ushort)0);
-            w.WriteBE(0x00000927U); w.WriteBE(0u);
-            w.WriteBE(0x00000937U); w.WriteBE(0u);
-            w.WriteBE(0x00000944U); w.WriteBE(0u);
+            w.WriteBE(comp1NameOff); w.WriteBE(0u);
+            w.WriteBE(comp2NameOff); w.WriteBE(0u);
+            w.WriteBE(comp3NameOff); w.WriteBE(0u);
         }));
+        // PtrN fixups for each NameStrPtr slot. Array header is 8B; element
+        // 0's NameStrPtr is at +8, element 1's at +16, element 2's at +24.
+        binFixups.Add((famCompetitorsOff +  8u, comp1NameOff));
+        binFixups.Add((famCompetitorsOff + 16u, comp2NameOff));
+        binFixups.Add((famCompetitorsOff + 24u, comp3NameOff));
 
         // MapStartLocation tLocationID — retail value 0x8 (emptyPathStr).
         // Location tLocationID — retail value 0x8E0 (a specific DW bin string).

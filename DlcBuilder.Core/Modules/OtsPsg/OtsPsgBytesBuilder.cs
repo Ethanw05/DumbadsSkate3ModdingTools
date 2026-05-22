@@ -102,14 +102,34 @@ public static class OtsPsgBytesBuilder
                 if (p.Z < zMin) zMin = p.Z; if (p.Z > zMax) zMax = p.Z;
             }
 
-            float cosY = MathF.Cos(t.YawRadians);
-            float sinY = MathF.Sin(t.YawRadians);
+            // m_TransformMatrix MUST be identity, even for rotated gates.
+            //
+            // IDA: `Sk8::TriggerVolumeUtils::ComputeTriggerVolumeCenter @ 0x82bd8e58`
+            // computes the runtime trigger center as
+            //   m_TransformMatrix * BoundingVolume.row3
+            // where BoundingVolume.row3 = (cx, cy, cz, 1) is the world-space
+            // centre we wrote into the inner Volume (VolumeBuilder.BuildBox).
+            // If m_TransformMatrix carries yaw rotation, the world-space
+            // centre gets rotated around the WORLD ORIGIN, not around the
+            // gate — producing nonsense positions for any non-zero yaw.
+            //
+            // Verified against every stock race PSG dumped
+            // (race_dwtn_01..03, race_indu_02, race_univ_01): identity matrix
+            // on every single trigger (rows = [1,0,0,0],[0,1,0,0],[0,0,1,0],
+            // [0,0,0,1]). The gate's orientation is already encoded in the
+            // polygon vertices (rotated world-space corners below) and in
+            // m_BasePlaneLeadingEdge / m_BasePlaneTrailingEdge — that's where
+            // the engine reads orientation for archway rendering.
+            //
+            // Earlier shape baked yaw into this matrix and gates with
+            // non-zero yaw rendered at rotated-around-origin positions
+            // (gates 3-5 in a 5-gate race: visually random).
             float[] matrix =
             {
-                cosY, 0f, -sinY, 0f,
-                0f,   1f,  0f,   0f,
-                sinY, 0f,  cosY, 0f,
-                0f,   0f,  0f,   1f,
+                1f, 0f, 0f, 0f,
+                0f, 1f, 0f, 0f,
+                0f, 0f, 1f, 0f,
+                0f, 0f, 0f, 1f,
             };
 
             // Polygon vertex order convention (both OTS and race builders):
@@ -169,22 +189,38 @@ public static class OtsPsgBytesBuilder
             uint innerVolumeDictIndex = (uint)(objects.Count + 1);
             objects.Add(new PsgObjectSpec(CollisionModelDataBuilder.Build(innerVolumeDictIndex), TypeCollModelData));
 
-            // Inner Volume — retail OTS PSGs use VOLUMETYPEBOX with half-extents
-            // derived from the trigger's axis-aligned bounding box.
-            float bxMin = float.PositiveInfinity, bxMax = float.NegativeInfinity;
-            float bzMin = float.PositiveInfinity, bzMax = float.NegativeInfinity;
-            foreach (var p in t.Polygon)
-            {
-                if (p.X < bxMin) bxMin = p.X; if (p.X > bxMax) bxMax = p.X;
-                if (p.Z < bzMin) bzMin = p.Z; if (p.Z > bzMax) bzMax = p.Z;
-            }
-            float hx = (bxMax - bxMin) / 2f;
-            float hy = (t.MaxY - t.MinY) / 2f;
-            float hz = (bzMax - bzMin) / 2f;
-            float cx = (bxMin + bxMax) / 2f;
-            float cy = (t.MinY + t.MaxY) / 2f;
-            float cz = (bzMin + bzMax) / 2f;
-            objects.Add(new PsgObjectSpec(VolumeBuilder.BuildBox(hx, hy, hz, cx, cy, cz), TypeVolume));
+            // Inner Volume — the box the engine uses for the race-gate visual.
+            //
+            // `Sk8::VisualDirector::VDWriter::AddRaceGate @ 0x82674010` (IDA)
+            // builds the visual transform as
+            //   `BoundingVolume.transform × tTriggerInstance.m_TransformMatrix`
+            // — a matrix-matrix multiply. With m_TransformMatrix held at
+            // identity (which `ComputeTriggerVolumeCenter @ 0x82bd8e58`
+            // requires for the gate's world centre to come out right), the
+            // visual matrix equals the BoundingVolume's transform. So any
+            // rotation we want surfaced on the in-world archway has to live
+            // in this Volume's upper 3×3, with the world centre still in
+            // row 3.
+            //
+            // Half-extents stay AUTHORED (local space) — derived from the
+            // polygon's edge lengths (vertex 1−0 is the local +X edge,
+            // 3−0 is the local +Z edge). Earlier this used BBox extents,
+            // which for rotated gates were larger than the actual gate and
+            // also stripped the rotation, giving an axis-aligned visual sized
+            // to the AABB instead of the gate.
+            float ex = t.Polygon[1].X - t.Polygon[0].X;
+            float ez = t.Polygon[1].Z - t.Polygon[0].Z;
+            float hx = MathF.Sqrt(ex * ex + ez * ez) * 0.5f;
+            ex = t.Polygon[3].X - t.Polygon[0].X;
+            ez = t.Polygon[3].Z - t.Polygon[0].Z;
+            float hz = MathF.Sqrt(ex * ex + ez * ez) * 0.5f;
+            float hy = (t.MaxY - t.MinY) * 0.5f;
+            float cx = (t.Polygon[0].X + t.Polygon[2].X) * 0.5f;
+            float cz = (t.Polygon[0].Z + t.Polygon[2].Z) * 0.5f;
+            float cy = (t.MinY + t.MaxY) * 0.5f;
+            objects.Add(new PsgObjectSpec(
+                VolumeBuilder.BuildBox(hx, hy, hz, cx, cy, cz, t.YawRadians),
+                TypeVolume));
         }
 
         // [..] LocationDescData — optional chev_*, vis_1, startlocator, waitlocator

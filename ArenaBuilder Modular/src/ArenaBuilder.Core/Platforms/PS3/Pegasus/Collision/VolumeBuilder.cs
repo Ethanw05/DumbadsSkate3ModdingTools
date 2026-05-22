@@ -55,12 +55,43 @@ public static class VolumeBuilder
     /// </summary>
     public static byte[] BuildBox(float hx, float hy, float hz, float cx, float cy, float cz)
     {
+        return BuildBox(hx, hy, hz, cx, cy, cz, 0f);
+    }
+
+    /// <summary>
+    /// Builds a VOLUMETYPEBOX volume with explicit world center, half-extents,
+    /// AND a yaw rotation around Y (radians). The rotation lives in the upper
+    /// 3×3 of the inner Volume's 4×4 transform; the world centre stays in
+    /// row 3 — so half-extents stay axis-aligned in local space and the
+    /// engine rotates them into world space when it reads the matrix.
+    ///
+    /// IDA evidence: <c>Sk8::VisualDirector::VDWriter::AddRaceGate @ 0x82674010</c>
+    /// computes the race-gate visual transform as
+    ///   <c>BoundingVolume.transform × tTriggerInstance.m_TransformMatrix</c>
+    /// — a matrix–matrix multiply. With <c>m_TransformMatrix = identity</c>
+    /// (the convention every stock race PSG uses), the visual matrix == the
+    /// BoundingVolume transform, so any rotation we want surfaced in the
+    /// gate visual has to live here.
+    /// </summary>
+    public static byte[] BuildBox(float hx, float hy, float hz, float cx, float cy, float cz, float yawRadians)
+    {
         var blob = new byte[0x60];
         var s = blob.AsSpan();
-        WriteIdentityMatrix(s);
-        BinaryPrimitives.WriteSingleBigEndian(s.Slice(0x30, 4), cx);
-        BinaryPrimitives.WriteSingleBigEndian(s.Slice(0x34, 4), cy);
-        BinaryPrimitives.WriteSingleBigEndian(s.Slice(0x38, 4), cz);
+
+        // Upper 3×3 = yaw rotation around Y (Skate's Y-up convention, row-vector
+        // multiplication so a positive yaw turns local +X toward world -Z).
+        float cosY = MathF.Cos(yawRadians);
+        float sinY = MathF.Sin(yawRadians);
+        float[] m =
+        {
+            cosY, 0f, -sinY, 0f,
+            0f,   1f,  0f,   0f,
+            sinY, 0f,  cosY, 0f,
+            cx,   cy,  cz,   0f,    // row 3 row.w stays 0 — stock writes 0 here, not 1
+        };
+        for (int i = 0; i < 16; i++)
+            BinaryPrimitives.WriteSingleBigEndian(s.Slice(i * 4, 4), m[i]);
+
         BinaryPrimitives.WriteUInt32BigEndian(s.Slice(0x40, 4), VolumeTypeBox);
         BinaryPrimitives.WriteSingleBigEndian(s.Slice(0x44, 4), hx);
         BinaryPrimitives.WriteSingleBigEndian(s.Slice(0x48, 4), hy);
