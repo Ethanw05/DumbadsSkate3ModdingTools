@@ -422,6 +422,16 @@ public static class SceneSerializer
         public bool? RaceGateSkipable { get; set; }
         public bool? IsDeathRace { get; set; }
 
+        // Skate-only fields. Nullable on the DTO for pre-Skate-authoring
+        // scene files.
+        public List<Guid>? SkateSpotVolumeIds { get; set; }
+        public Guid? SkateTurnBasedStartVolumeId { get; set; }
+        public Guid? SkateWaitLocatorId { get; set; }
+        public List<Guid>? SkateVisualIndicatorLocatorIds { get; set; }
+        public float? SkateTimeLimitSeconds { get; set; }
+        public bool? SkateUseDwtn01Profile { get; set; }
+        public int? SkateOwnedItRewardCredits { get; set; }
+
         public static ChallengeDto From(Challenge c) => new()
         {
             Id = c.Id,
@@ -442,6 +452,13 @@ public static class SceneSerializer
             RaceKilledItSeconds = c.RaceKilledItSeconds,
             RaceGateSkipable = c.RaceGateSkipable,
             IsDeathRace = c.IsDeathRace,
+            SkateSpotVolumeIds = c.SkateSpotVolumeIds.ToList(),
+            SkateTurnBasedStartVolumeId = c.SkateTurnBasedStartVolumeId,
+            SkateWaitLocatorId = c.SkateWaitLocatorId,
+            SkateVisualIndicatorLocatorIds = c.SkateVisualIndicatorLocatorIds.ToList(),
+            SkateTimeLimitSeconds = c.SkateTimeLimitSeconds,
+            SkateUseDwtn01Profile = c.SkateUseDwtn01Profile,
+            SkateOwnedItRewardCredits = c.SkateOwnedItRewardCredits,
         };
 
         public Challenge ToChallenge()
@@ -473,6 +490,13 @@ public static class SceneSerializer
             if (RaceKilledItSeconds is float kit) c.RaceKilledItSeconds = kit;
             if (RaceGateSkipable is bool skip) c.RaceGateSkipable = skip;
             if (IsDeathRace is bool dr) c.IsDeathRace = dr;
+            foreach (Guid g in SkateSpotVolumeIds ?? []) c.SkateSpotVolumeIds.Add(g);
+            c.SkateTurnBasedStartVolumeId = SkateTurnBasedStartVolumeId;
+            c.SkateWaitLocatorId = SkateWaitLocatorId;
+            foreach (Guid g in SkateVisualIndicatorLocatorIds ?? []) c.SkateVisualIndicatorLocatorIds.Add(g);
+            if (SkateTimeLimitSeconds is float stl) c.SkateTimeLimitSeconds = stl;
+            if (SkateUseDwtn01Profile is bool sd) c.SkateUseDwtn01Profile = sd;
+            if (SkateOwnedItRewardCredits is int sor) c.SkateOwnedItRewardCredits = sor;
             return c;
         }
     }

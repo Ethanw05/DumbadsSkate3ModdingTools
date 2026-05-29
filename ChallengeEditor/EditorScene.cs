@@ -312,6 +312,45 @@ public sealed class Challenge
     /// IntroNIS/OnlineOutroNIS audio fields. Maps to
     /// `ChallengeInput.IsDeathRace`.
     public bool IsDeathRace { get; set; }
+
+    // ─── Skate-only authoring (Game of S.K.A.T.E.) ──────────────────────
+    // Used when Type == ChallengeType.Skate. Own pipeline — not OTS-shaped.
+    // Anchored to 10 base-game retail spots (skate_{dwtn_01..04,
+    // indu_01..03, univ_01..03}). Per-spot: 1-2 SpotVolumes +
+    // ChallengeBoundary + TurnBasedStartVolume + start/wait locators +
+    // 1-2 visual indicators.
+
+    /// 1 or 2 scoring volumes. Each Id resolves to a TriggerVolume on the
+    /// owning map. Order = runtime spot order. Maps to
+    /// `ChallengeInput.SkateSpotVolumeIds`.
+    public List<Guid> SkateSpotVolumeIds { get; } = new();
+
+    /// Turn-based start volume. Maps to
+    /// `ChallengeInput.SkateTurnBasedStartVolumeId`.
+    public Guid? SkateTurnBasedStartVolumeId { get; set; }
+
+    /// Wait locator. Maps to `ChallengeInput.SkateWaitLocatorId`.
+    public Guid? SkateWaitLocatorId { get; set; }
+
+    /// 1 or 2 visual indicators. Maps to
+    /// `ChallengeInput.SkateVisualIndicatorLocatorIds`.
+    public List<Guid> SkateVisualIndicatorLocatorIds { get; } = new();
+
+    /// Per-spot turn timer (seconds). Base default 15.0f. Maps to
+    /// `ChallengeInput.SkateTimeLimitSeconds`.
+    public float SkateTimeLimitSeconds { get; set; } = 15f;
+
+    /// True → emit dwtn_01 profile per-instance challenge_global_data
+    /// (AvailableOnline+DebugOnly+WorldLocation). False (default) → emit
+    /// "rest" profile (Hash_2E4824C81FDAE87C + OwnedItReward +
+    /// RequiredChallengeHull). Maps to
+    /// `ChallengeInput.SkateUseDwtn01Profile`.
+    public bool SkateUseDwtn01Profile { get; set; }
+
+    /// OwnedItReward amount (credits) when SkateUseDwtn01Profile == false.
+    /// Base ships 2500. Maps to
+    /// `ChallengeInput.SkateOwnedItRewardCredits`.
+    public int SkateOwnedItRewardCredits { get; set; } = 2500;
 }
 
-public enum ChallengeType { Ots, Otl, Photo, Film, Race }
+public enum ChallengeType { Ots, Otl, Photo, Film, Race, Skate }

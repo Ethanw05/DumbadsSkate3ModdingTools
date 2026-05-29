@@ -38,6 +38,7 @@ public static class SceneToPackageInput
                     ChallengeType.Photo => ChallengeKind.Photo,
                     ChallengeType.Film => ChallengeKind.Film,
                     ChallengeType.Race => ChallengeKind.Race,
+                    ChallengeType.Skate => ChallengeKind.Skate,
                     _ => ChallengeKind.Ots,
                 };
 
@@ -84,6 +85,13 @@ public static class SceneToPackageInput
                     RaceHeats = raceHeats,
                     RaceGateSkipable = c.RaceGateSkipable,
                     IsDeathRace = c.IsDeathRace,
+                    SkateSpotVolumeIds = c.SkateSpotVolumeIds.ToList(),
+                    SkateTurnBasedStartVolumeId = c.SkateTurnBasedStartVolumeId,
+                    SkateWaitLocatorId = c.SkateWaitLocatorId,
+                    SkateVisualIndicatorLocatorIds = c.SkateVisualIndicatorLocatorIds.ToList(),
+                    SkateTimeLimitSeconds = c.SkateTimeLimitSeconds,
+                    SkateUseDwtn01Profile = c.SkateUseDwtn01Profile,
+                    SkateOwnedItRewardCredits = c.SkateOwnedItRewardCredits,
                 };
             }).ToList();
 

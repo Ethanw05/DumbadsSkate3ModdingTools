@@ -2046,6 +2046,10 @@ public sealed class EditorUi
         if (c.Type == ChallengeType.Race)
             DrawRaceAuthoringSection(c, cw);
 
+        // Skate-only authoring section (Game of S.K.A.T.E.).
+        if (c.Type == ChallengeType.Skate)
+            DrawSkateAuthoringSection(c, cw);
+
         ImGui.Spacing();
         if (ImGui.TreeNode("Visual Locators"))
         {
@@ -2228,6 +2232,124 @@ public sealed class EditorUi
             ImGui.SameLine();
             ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f),
                 "(no gates yet — race won't build until you add at least one)");
+        }
+    }
+
+    /// Skate-only inspector section (Game of S.K.A.T.E.). Renders below the
+    /// shared challenge fields when <see cref="ChallengeType.Skate"/> is
+    /// selected. Maps to <see cref="Challenge"/>.Skate* properties; data
+    /// shape mirrors the 10 base-game retail spots (skate_dwtn_01..04 etc.).
+    /// Per-spot needs: 1-2 SpotVolumes + ChallengeBoundary +
+    /// TurnBasedStartVolume + start/wait locators + 1-2 visual indicators.
+    private void DrawSkateAuthoringSection(Challenge c, float cw)
+    {
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextColored(new Vector4(0.7f, 0.9f, 1f, 1f), "Skate (Game of S.K.A.T.E.)");
+        ImGui.Spacing();
+
+        ImGui.PushItemWidth(cw);
+        float timeLimit = c.SkateTimeLimitSeconds;
+        if (ImGui.DragFloat("Time limit (s)", ref timeLimit, 0.5f, 0.1f, 600f, "%.1f"))
+            c.SkateTimeLimitSeconds = timeLimit;
+
+        int reward = c.SkateOwnedItRewardCredits;
+        if (ImGui.DragInt("Owned-it reward (credits)", ref reward, 50f, 0, 100_000))
+            c.SkateOwnedItRewardCredits = reward;
+        ImGui.PopItemWidth();
+
+        bool dwtn01 = c.SkateUseDwtn01Profile;
+        if (ImGui.Checkbox("Use dwtn_01 profile (online + debug, no reward)", ref dwtn01))
+            c.SkateUseDwtn01Profile = dwtn01;
+        ImGui.SameLine();
+        ImGui.TextDisabled("(else: rest profile w/ 2500cr reward + hull)");
+
+        ImGui.Spacing();
+        ImGui.Text("Volumes");
+        DrawObjectRefCombo("Challenge boundary", _scene.TriggerVolumes,
+            c.ChallengeBoundaryId, id => c.ChallengeBoundaryId = id, cw);
+        DrawObjectRefCombo("Turn-based start volume", _scene.TriggerVolumes,
+            c.SkateTurnBasedStartVolumeId, id => c.SkateTurnBasedStartVolumeId = id, cw);
+
+        ImGui.Spacing();
+        ImGui.Text($"Spot volumes ({c.SkateSpotVolumeIds.Count}/2)");
+        ImGui.SameLine();
+        ImGui.TextDisabled("— base ships 1 or 2");
+        DrawSkateGuidList(c.SkateSpotVolumeIds, _scene.TriggerVolumes.Select(v => (v.Id, v.Name)).ToList(),
+            maxCount: 2, addLabel: "+ Add spot volume", idPrefix: "skate_sv");
+
+        ImGui.Spacing();
+        ImGui.Text("Locators");
+        var waitOptions = _scene.Locators
+            .OrderBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        DrawLocatorRefCombo("Wait locator", waitOptions, c.SkateWaitLocatorId,
+            id => c.SkateWaitLocatorId = id, cw);
+
+        ImGui.Spacing();
+        ImGui.Text($"Visual indicators ({c.SkateVisualIndicatorLocatorIds.Count}/2)");
+        DrawSkateGuidList(c.SkateVisualIndicatorLocatorIds,
+            _scene.Locators.Select(l => (l.Id, l.Name)).ToList(),
+            maxCount: 2, addLabel: "+ Add visual indicator", idPrefix: "skate_vi");
+    }
+
+    /// Renders a reorderable/removable Guid list bound to a list of
+    /// authored objects (trigger volumes or locators), with a "+ Add"
+    /// button that appends the first available option. Caps growth at
+    /// <paramref name="maxCount"/>.
+    private void DrawSkateGuidList(
+        List<Guid> ids,
+        IReadOnlyList<(Guid Id, string Name)> options,
+        int maxCount,
+        string addLabel,
+        string idPrefix)
+    {
+        int? moveUpIndex = null;
+        int? moveDownIndex = null;
+        int? removeIndex = null;
+
+        for (int i = 0; i < ids.Count; i++)
+        {
+            Guid current = ids[i];
+            ImGui.PushID($"{idPrefix}_{i}");
+
+            if (ImGui.ArrowButton("up", ImGuiDir.Up)) moveUpIndex = i;
+            ImGui.SameLine();
+            if (ImGui.ArrowButton("down", ImGuiDir.Down)) moveDownIndex = i;
+            ImGui.SameLine();
+            float available = ImGui.GetContentRegionAvail().X;
+            float removeButtonWidth = 30f;
+            ImGui.SetNextItemWidth(available - removeButtonWidth - ImGui.GetStyle().ItemSpacing.X);
+            string previewName = options.FirstOrDefault(o => o.Id == current).Name ?? "(none)";
+            string preview = $"#{i + 1:D2} — {previewName}";
+            if (ImGui.BeginCombo("##picker", preview))
+            {
+                if (ImGui.Selectable("(none)", current == Guid.Empty))
+                    ids[i] = Guid.Empty;
+                foreach (var opt in options)
+                {
+                    bool sel = opt.Id == current;
+                    if (ImGui.Selectable(opt.Name + "##opt_" + opt.Id, sel))
+                        ids[i] = opt.Id;
+                }
+                ImGui.EndCombo();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("X")) removeIndex = i;
+            ImGui.PopID();
+        }
+
+        if (moveUpIndex is int ui && ui > 0)
+            (ids[ui - 1], ids[ui]) = (ids[ui], ids[ui - 1]);
+        else if (moveDownIndex is int di && di < ids.Count - 1)
+            (ids[di], ids[di + 1]) = (ids[di + 1], ids[di]);
+        else if (removeIndex is int ri)
+            ids.RemoveAt(ri);
+
+        if (ids.Count < maxCount && ImGui.Button(addLabel))
+        {
+            Guid initial = options.Count > 0 ? options[0].Id : Guid.Empty;
+            ids.Add(initial);
         }
     }
 
@@ -2487,6 +2609,7 @@ public sealed class EditorUi
             (ChallengeType.Photo, "Photo", "Photo challenge. (Pipeline stub.)"),
             (ChallengeType.Film,  "Film",  "Film challenge. (Pipeline stub.)"),
             (ChallengeType.Race,  "Race",  "Race / Death Race. Gate trigger volumes + time limit."),
+            (ChallengeType.Skate, "Skate", "Game of S.K.A.T.E. Turn-based copy-trick (online)."),
         };
 
         foreach (var opt in options)
@@ -2524,6 +2647,7 @@ public sealed class EditorUi
             ChallengeType.Photo => "photo",
             ChallengeType.Film => "film",
             ChallengeType.Race => "race",
+            ChallengeType.Skate => "skate",
             _ => "challenge",
         };
         Challenge c = new()
