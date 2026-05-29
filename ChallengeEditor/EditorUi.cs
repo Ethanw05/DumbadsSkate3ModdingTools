@@ -2008,13 +2008,12 @@ public sealed class EditorUi
         // DrawChallengeTypePicker. Different types reference different
         // authoring data (OTS volumes vs race gates), so post-creation
         // mutation would orphan references. Type shown read-only above.
-        // Score/XP fields are OTS-only — race challenges use heat timing
-        // (TimeLimit + KilledItSeconds) for scoring, not point totals.
-        // Hide them on Race so the inspector doesn't suggest they're
-        // wired up. The underlying scene fields still serialize so a
-        // user can flip the challenge type back to OTS without losing
-        // their previously-authored point values.
-        if (c.Type != ChallengeType.Race)
+        // Score/XP fields are OTS-only. Race uses heat timing
+        // (TimeLimit + KilledItSeconds), Skate uses turn timer +
+        // owned-it credit reward. Hide on Race + Skate; underlying scene
+        // fields still serialize so flipping type back to OTS doesn't
+        // lose previously-authored point values.
+        if (c.Type != ChallengeType.Race && c.Type != ChallengeType.Skate)
         {
             int owned = c.OwnedPoints;
             if (ImGui.DragInt("Owned points", ref owned, 5f, 0, 100_000)) c.OwnedPoints = owned;
@@ -2029,8 +2028,9 @@ public sealed class EditorUi
         ImGui.Separator();
         ImGui.Text("References");
         cw = InspectorValueWidth();
-        // OTS-only references — race uses a separate gates panel below.
-        if (c.Type != ChallengeType.Race)
+        // OTS-only top-level references. Race uses a separate gates panel
+        // below; Skate uses its own ChallengeBoundary + SpotVolumes panel.
+        if (c.Type != ChallengeType.Race && c.Type != ChallengeType.Skate)
         {
             DrawObjectRefCombo("Scoring volume", _scene.TriggerVolumes, c.ScoringVolumeId, id => c.ScoringVolumeId = id, cw);
             DrawObjectRefCombo("Challenge boundary", _scene.TriggerVolumes, c.ChallengeBoundaryId, id => c.ChallengeBoundaryId = id, cw);
