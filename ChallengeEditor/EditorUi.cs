@@ -2246,51 +2246,95 @@ public sealed class EditorUi
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.TextColored(new Vector4(0.7f, 0.9f, 1f, 1f), "Skate (Game of S.K.A.T.E.)");
+        ImGui.TextDisabled("Turn-based copy-trick. Min spot = 1 boundary + 1 start volume + 1 spot volume + start/wait locator + 1 visual indicator.");
         ImGui.Spacing();
 
+        // ── Tuning ───────────────────────────────────────────────────────
+        ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "TUNING");
+        ImGui.Separator();
         ImGui.PushItemWidth(cw);
         float timeLimit = c.SkateTimeLimitSeconds;
-        if (ImGui.DragFloat("Time limit (s)", ref timeLimit, 0.5f, 0.1f, 600f, "%.1f"))
+        if (ImGui.DragFloat("Turn timer (s)", ref timeLimit, 0.5f, 0.1f, 600f, "%.1f"))
             c.SkateTimeLimitSeconds = timeLimit;
+        SkateHelp("Seconds the active player has to land their attempt. Base default = 15.0s.");
 
         int reward = c.SkateOwnedItRewardCredits;
-        if (ImGui.DragInt("Owned-it reward (credits)", ref reward, 50f, 0, 100_000))
+        if (ImGui.DragInt("Owned-it reward", ref reward, 50f, 0, 100_000))
             c.SkateOwnedItRewardCredits = reward;
+        SkateHelp("Credits awarded for owning the spot. Base ships 2500. Ignored when dwtn_01 profile is on.");
         ImGui.PopItemWidth();
 
         bool dwtn01 = c.SkateUseDwtn01Profile;
-        if (ImGui.Checkbox("Use dwtn_01 profile (online + debug, no reward)", ref dwtn01))
+        if (ImGui.Checkbox("Use dwtn_01 profile", ref dwtn01))
             c.SkateUseDwtn01Profile = dwtn01;
-        ImGui.SameLine();
-        ImGui.TextDisabled("(else: rest profile w/ 2500cr reward + hull)");
+        SkateHelp("dwtn_01 profile = AvailableOnline=false + DebugOnly=true + WorldLocation. The other 9 base spots use the 'rest' profile = OwnedItReward + RequiredChallengeHull (default).");
 
         ImGui.Spacing();
-        ImGui.Text("Volumes");
-        DrawObjectRefCombo("Challenge boundary", _scene.TriggerVolumes,
+
+        // ── Volumes ──────────────────────────────────────────────────────
+        ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "VOLUMES");
+        ImGui.Separator();
+        var triggerOptions = _scene.TriggerVolumes;
+        DrawObjectRefCombo("Challenge boundary*", triggerOptions,
             c.ChallengeBoundaryId, id => c.ChallengeBoundaryId = id, cw);
-        DrawObjectRefCombo("Turn-based start volume", _scene.TriggerVolumes,
+        SkateHelp("REQUIRED. Outer 'must stay inside' zone — leaving fails the run.");
+
+        DrawObjectRefCombo("Start volume*", triggerOptions,
             c.SkateTurnBasedStartVolumeId, id => c.SkateTurnBasedStartVolumeId = id, cw);
+        SkateHelp("REQUIRED. Small zone the active player must stand in to take their attempt.");
 
         ImGui.Spacing();
-        ImGui.Text($"Spot volumes ({c.SkateSpotVolumeIds.Count}/2)");
-        ImGui.SameLine();
-        ImGui.TextDisabled("— base ships 1 or 2");
-        DrawSkateGuidList(c.SkateSpotVolumeIds, _scene.TriggerVolumes.Select(v => (v.Id, v.Name)).ToList(),
+        DrawSkateCountLabel("Spot volume", c.SkateSpotVolumeIds.Count, 1, 2);
+        SkateHelp("Scoring zones — trick must land here. Base ships 1 (most spots) or 2 (dwtn_01, indu_01).");
+        DrawSkateGuidList(c.SkateSpotVolumeIds, triggerOptions.Select(v => (v.Id, v.Name)).ToList(),
             maxCount: 2, addLabel: "+ Add spot volume", idPrefix: "skate_sv");
 
         ImGui.Spacing();
-        ImGui.Text("Locators");
-        var waitOptions = _scene.Locators
+
+        // ── Locators ─────────────────────────────────────────────────────
+        ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "LOCATORS");
+        ImGui.Separator();
+        ImGui.TextDisabled("Start locator picked above in 'References'.");
+
+        var locatorOptions = _scene.Locators
             .OrderBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        DrawLocatorRefCombo("Wait locator", waitOptions, c.SkateWaitLocatorId,
+        DrawLocatorRefCombo("Wait locator", locatorOptions, c.SkateWaitLocatorId,
             id => c.SkateWaitLocatorId = id, cw);
+        SkateHelp("Where queued (non-active) players hang out. Falls back to Start locator if unset.");
 
         ImGui.Spacing();
-        ImGui.Text($"Visual indicators ({c.SkateVisualIndicatorLocatorIds.Count}/2)");
+        DrawSkateCountLabel("Visual indicator", c.SkateVisualIndicatorLocatorIds.Count, 1, 2);
+        SkateHelp("Ribbon-arrow marker above each spot volume. Pick 1 VI per spot volume.");
         DrawSkateGuidList(c.SkateVisualIndicatorLocatorIds,
-            _scene.Locators.Select(l => (l.Id, l.Name)).ToList(),
+            locatorOptions.Select(l => (l.Id, l.Name)).ToList(),
             maxCount: 2, addLabel: "+ Add visual indicator", idPrefix: "skate_vi");
+    }
+
+    /// "<noun>s (n/max)" header used by Skate list sections.
+    private static void DrawSkateCountLabel(string noun, int count, int min, int max)
+    {
+        Vector4 colour = count < min || count > max
+            ? new Vector4(1f, 0.7f, 0.4f, 1f)   // amber: out of valid range
+            : new Vector4(0.9f, 0.9f, 0.9f, 1f);
+        ImGui.TextColored(colour, $"{noun}s ({count}/{max})");
+        ImGui.SameLine();
+        ImGui.TextDisabled($"— need {min}-{max}");
+    }
+
+    /// Help-tooltip dot appended after a Skate field. Hover for explanation.
+    private static void SkateHelp(string tip)
+    {
+        ImGui.SameLine();
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.BeginTooltip();
+            ImGui.PushTextWrapPos(ImGui.GetFontSize() * 30f);
+            ImGui.TextUnformatted(tip);
+            ImGui.PopTextWrapPos();
+            ImGui.EndTooltip();
+        }
     }
 
     /// Renders a reorderable/removable Guid list bound to a list of
