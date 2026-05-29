@@ -404,10 +404,16 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
                 // check on some FE menu transitions).
                 Description: string.IsNullOrEmpty(t.Race.Description) ? " " : t.Race.Description))
             .ToList();
+        var skateHalEntries = skateSpecs.Select(t => new FeEnglishLanguageBin.SkateChallengeEntry(
+                TitleHalId: t.Skate.TitleHalId,
+                DescHalId: t.Skate.DescHalId,
+                DisplayTitle: t.Skate.DisplayTitle,
+                Description: t.Skate.Description))
+            .ToList();
 
         try
         {
-            byte[] langBin = FeEnglishLanguageBin.Build(input, manifest.MapSpecs, otsHalEntries, raceHalEntries);
+            byte[] langBin = FeEnglishLanguageBin.Build(input, manifest.MapSpecs, otsHalEntries, raceHalEntries, skateHalEntries);
             byte[] histBin = FeEnglishHistogramBin.Build();
             // Retail layout: `fe/languages/english/` (pluralized "languages") and
             // `LANGUAGE_English_<slug>_skate3ng-<package>.BIN` / `_HISTOGRAM_*.BIN`

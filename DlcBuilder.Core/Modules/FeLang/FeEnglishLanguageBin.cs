@@ -33,7 +33,8 @@ public static class FeEnglishLanguageBin
         PackageInput input,
         IReadOnlyList<DlcSpec> specs,
         IReadOnlyList<OtsChallengeEntry> otsChallenges,
-        IReadOnlyList<RaceChallengeEntry>? raceChallenges = null)
+        IReadOnlyList<RaceChallengeEntry>? raceChallenges = null,
+        IReadOnlyList<SkateChallengeEntry>? skateChallenges = null)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(specs);
@@ -104,6 +105,24 @@ public static class FeEnglishLanguageBin
             {
                 entries.Add((c.TitleHalId, c.DisplayTitle));
                 entries.Add((c.DescHalId, c.Description));
+            }
+        }
+
+        // Skate (Game of S.K.A.T.E.) challenge HAL strings. Per-spot
+        // challenge_global_data row's Title attribute (emitted by
+        // SkateChallengeRowsBuilder) points at ID_CHALLENGE_<KEY>_TITLE;
+        // base-game `s_k_a_t_e` family supplies ID_MISSION_TEMPLATE_SKATE_*
+        // for the menu template fallback. Only per-instance HALIDs needed
+        // here.
+        if (skateChallenges != null)
+        {
+            foreach (var c in skateChallenges)
+            {
+                entries.Add((c.TitleHalId, c.DisplayTitle));
+                // Per-spot Description empty in our SkateChallengeSpec by
+                // design (matches base — instance rows don't set DESC). Emit
+                // a single-space placeholder so FE lookup never returns NULL.
+                entries.Add((c.DescHalId, string.IsNullOrEmpty(c.Description) ? " " : c.Description));
             }
         }
 
@@ -179,4 +198,8 @@ public static class FeEnglishLanguageBin
     /// flags, etc.) can disambiguate race-typed entries without grepping
     /// HALID prefixes.
     public sealed record RaceChallengeEntry(string TitleHalId, string DescHalId, string DisplayTitle, string Description);
+
+    /// One Skate (Game of S.K.A.T.E.) challenge to register two HAL entries
+    /// for (title + description). Same shape as <see cref="OtsChallengeEntry"/>.
+    public sealed record SkateChallengeEntry(string TitleHalId, string DescHalId, string DisplayTitle, string Description);
 }
