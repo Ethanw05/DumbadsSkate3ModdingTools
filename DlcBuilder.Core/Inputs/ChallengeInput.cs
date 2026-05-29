@@ -7,6 +7,7 @@ public enum ChallengeKind
     Photo,
     Film,
     Race,
+    Skate,
 }
 
 /// One OTS-style challenge authored in the editor. References to other authored
@@ -68,6 +69,45 @@ public sealed record ChallengeInput
     /// `IntroNIS` + `OutroNIS` instead of `AudioPlayerQuitChallenge`, and the
     /// produced key/filename is suffixed `_ol`.
     public bool IsDeathRace { get; init; }
+
+    // ─── Skate-only inputs ─────────────────────────────────────────────────
+    // Used when Kind == ChallengeKind.Skate. Ignored for every other kind.
+    // Game of S.K.A.T.E. — turn-based copy-trick. Per-spot spatial layout:
+    //   1-2 SpotVolumes (scoring) + ChallengeBoundary + TurnBasedStartVolume
+    //   + start locator + wait locator + 1-2 visual indicators.
+    // Base game ships 10 spots with mixed counts (verified against
+    // skate_dwtn_01..04, skate_indu_01..03, skate_univ_01..03 dumps).
+
+    /// One or two scoring volumes. Each is a TriggerVolumeInput Guid on the
+    /// owning MapInput. Base instances ship 1 or 2 spot volumes.
+    public IReadOnlyList<Guid> SkateSpotVolumeIds { get; init; } = Array.Empty<Guid>();
+
+    /// Turn-based start volume — the area the active player must be standing in
+    /// to take their attempt. TriggerVolumeInput Guid.
+    public Guid? SkateTurnBasedStartVolumeId { get; init; }
+
+    /// Waiting-locator for the queued (non-active) players. LocatorInput Guid.
+    public Guid? SkateWaitLocatorId { get; init; }
+
+    /// One or two visual indicators (ribbon arrows). LocatorInput Guids. Base
+    /// instances ship 1 or 2.
+    public IReadOnlyList<Guid> SkateVisualIndicatorLocatorIds { get; init; } = Array.Empty<Guid>();
+
+    /// Per-spot timer (seconds). Engine default = 15.0f (matches base
+    /// s_k_a_t_e framework row).
+    public float SkateTimeLimitSeconds { get; init; } = 15f;
+
+    /// When true, the per-instance `challenge_global_data` row writes the
+    /// "dwtn_01 profile" attr set (AvailableOnline, DebugOnly, WorldLocation).
+    /// When false (default), writes the "rest" profile
+    /// (Hash_2E4824C81FDAE87C + OwnedItReward + RequiredChallengeHull).
+    /// Verified across all 10 base instances.
+    public bool SkateUseDwtn01Profile { get; init; }
+
+    /// Owned-it reward (in-game credits). Maps to OwnedItReward.amount on the
+    /// per-instance row when SkateUseDwtn01Profile == false. Base ships 2500
+    /// across 9/10 instances.
+    public int SkateOwnedItRewardCredits { get; init; } = 2500;
 }
 
 /// One gate (checkpoint) along a race leg. The trigger volume is the AABB

@@ -49,7 +49,8 @@ public static class ChallengeBankFreeskateVltBuilder
         IReadOnlyList<DlcManifest.DlcSpec> maps,
         string? firstMapMapCategoryKey = null,
         IReadOnlyList<(OtsChallengeSpec Ots, string MapCategoryKey)>? otsChallenges = null,
-        IReadOnlyList<(RaceChallengeSpec Race, string MapCategoryKey)>? raceChallenges = null)
+        IReadOnlyList<(RaceChallengeSpec Race, string MapCategoryKey)>? raceChallenges = null,
+        IReadOnlyList<Skate.SkateChallengeSpec>? skateChallenges = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(frameworkKey);
         ArgumentNullException.ThrowIfNull(maps);
@@ -500,6 +501,19 @@ public static class ChallengeBankFreeskateVltBuilder
             {
                 RaceChallengeRowsBuilder.AppendChallengeRows(
                     race, frameworkKey, mapCatKey, bin, binFixups, collections);
+            }
+        }
+
+        // ── Per-Skate-spot rows ───────────────────────────────────────────
+        // S.K.A.T.E. spots parent to base-game `s_k_a_t_e` family (no per-DLC
+        // family row — base family is always loaded). Each spot emits 2 rows:
+        // `challenges/skate_<key>` + `challenge_global_data/skate_<key>`.
+        if (skateChallenges != null && skateChallenges.Count > 0)
+        {
+            foreach (var skate in skateChallenges)
+            {
+                Skate.SkateChallengeRowsBuilder.AppendChallengeRows(
+                    skate, bin, binFixups, collections);
             }
         }
 

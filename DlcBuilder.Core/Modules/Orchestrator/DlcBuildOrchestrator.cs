@@ -194,6 +194,27 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
                 "Sk3_* engine keys), no DLC-wide achievement aggregation."));
         }
 
+        // -- 3b. Collect Skate (Game of S.K.A.T.E.) challenge specs ---------
+        // Skate is its own pipeline (not OTS-shaped): SkateChallengeSpec,
+        // SkateSpecBuilder, SkateLocalDataVltBuilder, SkateChallengeRowsBuilder.
+        // Per-instance rows parent to base-game `s_k_a_t_e` family (always
+        // loaded via base challengebanks/main.vlt), so no per-DLC family row
+        // is needed.
+        var skateSpecs = new List<(MapInput Map, DlcSpec Spec, Skate.SkateChallengeSpec Skate)>();
+        foreach (var (mapInputS, mapSpecS) in input.Maps.Zip(manifest.MapSpecs))
+        {
+            foreach (var ch in mapInputS.Challenges)
+            {
+                if (ch.Kind != ChallengeKind.Skate) continue;
+                var skateSpec = Skate.SkateSpecBuilder.FromChallengeInput(ch, mapInputS, mapSpecS, diagnostics);
+                skateSpecs.Add((mapInputS, mapSpecS, skateSpec));
+                diagnostics.Add(new(DiagnosticLevel.Info, "Skate",
+                    $"[{skateSpec.ChallengeKey}] Resolved Skate spec: " +
+                    $"{skateSpec.SpotVolumes.Count} spot vol(s), {skateSpec.VisualIndicators.Count} VI(s), " +
+                    $"profile={(skateSpec.UseDwtn01Profile ? "dwtn_01" : "rest")}."));
+            }
+        }
+
         // -- 4a. Collect OTS challenge specs UP FRONT ------------------------
         // Built before the lang pack so the lang pack can use the same
         // canonical `spec.TitleHalId` / `spec.DescHalId` that OTS row D
@@ -451,11 +472,13 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
             var raceForChallengeBanks = raceSpecs
                 .Select(t => (t.Race, MapCategoryKey: packageCategoryKey))
                 .ToList();
+            var skateForChallengeBanks = skateSpecs.Select(t => t.Skate).ToList();
             var cb = ChallengeBankFreeskateVltBuilder.Build(
                 frameworkKey, manifest.MapSpecs,
                 firstMapMapCategoryKey: packageCategoryKey,
                 otsChallenges: otsForChallengeBanks,
-                raceChallenges: raceForChallengeBanks);
+                raceChallenges: raceForChallengeBanks,
+                skateChallenges: skateForChallengeBanks);
             string cbDir = Path.Combine(dbDir, "challengebanks");
             Directory.CreateDirectory(cbDir);
             string cbVltPath = Path.Combine(cbDir, cb.FileName + ".vlt");
@@ -619,6 +642,33 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
         //   • FE language pack entries for ID_CHALLENGE_<KEY>_TITLE/_DESC
         // None of those are wired yet — see the Warning diagnostic emitted
         // after this loop.
+        // -- 5d.1b. Per-Skate-spot local_data VLT -------------------------------
+        // Per-spot challenge_local_data/skate_<key>.vlt — own pipeline,
+        // parents to base-game `s_k_a_t_e` framework row.
+        foreach (var (_, _, skate) in skateSpecs)
+        {
+            try
+            {
+                var sd = Skate.SkateLocalDataVltBuilder.Build(skate);
+                string sdVltPath = Path.Combine(locDataDir, sd.FileName + ".vlt");
+                string sdBinPath = Path.Combine(locDataDir, sd.FileName + ".bin");
+                File.WriteAllBytes(sdVltPath, sd.VltBytes);
+                File.WriteAllBytes(sdBinPath, sd.BinBytes);
+                written.Add(sdVltPath);
+                written.Add(sdBinPath);
+                diagnostics.Add(new(DiagnosticLevel.Info, "SkateLocalData",
+                    $"[{skate.ChallengeKey}] Wrote per-instance Skate VLT ({sd.VltBytes.Length}B) + BIN ({sd.BinBytes.Length}B)."));
+
+                // Per-spot mission folder (Pres+Tex stubs + cSim_Global PSG).
+                Skate.SkateMissionFolderWriter.Write(skate, stagingDataDir, written);
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add(new(DiagnosticLevel.Error, "SkateLocalData",
+                    $"[{skate.ChallengeKey}] Build failed: {ex.Message}"));
+            }
+        }
+
         foreach (var (_, _, race) in raceSpecs)
         {
             try

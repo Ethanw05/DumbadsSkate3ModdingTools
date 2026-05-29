@@ -210,6 +210,9 @@ public static class PackageInputValidator
                 case ChallengeKind.Race:
                     ValidateRaceChallenge(ch, map, chCtx, diags);
                     break;
+                case ChallengeKind.Skate:
+                    ValidateSkateChallenge(ch, map, chCtx, diags);
+                    break;
                 default:
                     diags.Add(Warn("Challenge.Kind",
                         $"{chCtx}: Challenge kind '{ch.Kind}' is not yet implemented " +
@@ -443,6 +446,74 @@ public static class PackageInputValidator
         return new string(s.ToLowerInvariant()
             .Where(c => char.IsLetterOrDigit(c) || c == '_')
             .ToArray());
+    }
+
+    /// Validates a Game of S.K.A.T.E. challenge. Own pipeline — does NOT
+    /// share OTS validation. Per-spot requires: 1-2 SpotVolumes, a
+    /// TurnBasedStartVolume, a ChallengeBoundary, a StartLocator, a
+    /// WaitLocator, and 1-2 visual indicator locators. All Guid refs must
+    /// resolve to a volume / locator on the owning map.
+    private static void ValidateSkateChallenge(
+        ChallengeInput ch, MapInput map, string chCtx, List<Diagnostic> diags)
+    {
+        if (ch.SkateSpotVolumeIds.Count < 1 || ch.SkateSpotVolumeIds.Count > 2)
+            diags.Add(Err("Skate.SpotVolumes",
+                $"{chCtx}: Skate spot must have 1 or 2 SkateSpotVolumeIds (got {ch.SkateSpotVolumeIds.Count}). " +
+                "Base game ships 1-2 per spot."));
+
+        if (ch.SkateVisualIndicatorLocatorIds.Count < 1 || ch.SkateVisualIndicatorLocatorIds.Count > 2)
+            diags.Add(Err("Skate.VisualIndicators",
+                $"{chCtx}: Skate spot must have 1 or 2 VisualIndicator locators (got {ch.SkateVisualIndicatorLocatorIds.Count})."));
+
+        if (ch.SkateTurnBasedStartVolumeId is null)
+            diags.Add(Err("Skate.TurnBasedStartVolume",
+                $"{chCtx}: Skate spot requires a SkateTurnBasedStartVolumeId."));
+
+        if (ch.ChallengeBoundaryId is null)
+            diags.Add(Err("Skate.ChallengeBoundary",
+                $"{chCtx}: Skate spot requires a ChallengeBoundaryId."));
+
+        if (ch.StartLocatorId is null)
+            diags.Add(Err("Skate.StartLocator",
+                $"{chCtx}: Skate spot requires a StartLocatorId."));
+
+        if (ch.SkateWaitLocatorId is null)
+            diags.Add(Warn("Skate.WaitLocator",
+                $"{chCtx}: Skate spot has no SkateWaitLocatorId; falling back to StartLocator position."));
+
+        // Resolve refs.
+        var volumeIds = map.TriggerVolumes.Select(v => v.Id).ToHashSet();
+        var locatorIds = map.Locators.Select(l => l.Id).ToHashSet();
+
+        foreach (var vid in ch.SkateSpotVolumeIds)
+            if (!volumeIds.Contains(vid))
+                diags.Add(Err("Skate.SpotVolume.Ref",
+                    $"{chCtx}: SkateSpotVolumeId {vid} does not resolve to a TriggerVolume on the map."));
+
+        if (ch.SkateTurnBasedStartVolumeId is Guid svId && !volumeIds.Contains(svId))
+            diags.Add(Err("Skate.TurnBasedStartVolume.Ref",
+                $"{chCtx}: SkateTurnBasedStartVolumeId {svId} does not resolve."));
+
+        if (ch.ChallengeBoundaryId is Guid cbId && !volumeIds.Contains(cbId))
+            diags.Add(Err("Skate.ChallengeBoundary.Ref",
+                $"{chCtx}: ChallengeBoundaryId {cbId} does not resolve."));
+
+        if (ch.StartLocatorId is Guid slId && !locatorIds.Contains(slId))
+            diags.Add(Err("Skate.StartLocator.Ref",
+                $"{chCtx}: StartLocatorId {slId} does not resolve."));
+
+        if (ch.SkateWaitLocatorId is Guid wlId && !locatorIds.Contains(wlId))
+            diags.Add(Err("Skate.WaitLocator.Ref",
+                $"{chCtx}: SkateWaitLocatorId {wlId} does not resolve."));
+
+        foreach (var lid in ch.SkateVisualIndicatorLocatorIds)
+            if (!locatorIds.Contains(lid))
+                diags.Add(Err("Skate.VisualIndicator.Ref",
+                    $"{chCtx}: SkateVisualIndicatorLocatorId {lid} does not resolve."));
+
+        if (ch.SkateTimeLimitSeconds <= 0f)
+            diags.Add(Warn("Skate.TimeLimit",
+                $"{chCtx}: SkateTimeLimitSeconds is {ch.SkateTimeLimitSeconds}; base default 15.0f."));
     }
 
     /// True when the DIST folder contains the 4-file Pres manifest-stub set
