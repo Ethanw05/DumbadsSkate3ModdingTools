@@ -8,6 +8,8 @@ namespace ChallengeEditor;
 // works reliably from inside a Veldrid/SDL render loop.
 public static class FolderPicker
 {
+    public static IntPtr OwnerHwnd { get; set; } = IntPtr.Zero;
+
     public static string? Pick(string title, string? initialPath = null)
     {
         if (!OperatingSystem.IsWindows())
@@ -32,7 +34,7 @@ public static class FolderPicker
                 }
             }
 
-            int hr = dlg.Show(IntPtr.Zero);
+            int hr = dlg.Show(OwnerHwnd);
             if (hr != 0) return null; // user canceled or error
             dlg.GetResult(out IShellItem? result);
             if (result is null) return null;
