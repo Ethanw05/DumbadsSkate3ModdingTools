@@ -74,13 +74,18 @@ public static class Program
             WindowInitialState = WindowState.Normal,
         };
         Sdl2Window window = VeldridStartup.CreateWindow(ref windowCi);
-        // Parent file/folder pickers under the editor HWND so their COM/WinForms pumps
-        // nest under our pump instead of racing it. Without this, certain selection
-        // patterns freeze the editor (FolderPicker selecting from INSIDE a folder;
-        // SceneFilePicker re-open going black).
-        FolderPicker.OwnerHwnd = window.Handle;
-        SceneFilePicker.OwnerHwnd = window.Handle;
-        Sk8FilePicker.OwnerHwnd = window.Handle;
+        // Parent file/folder pickers under the editor's TOP-LEVEL Win32 HWND so
+        // their COM/WinForms pumps nest under our pump instead of racing it.
+        // Sdl2Window.Handle is the SDL_Window* (an opaque SDL pointer), NOT a
+        // Win32 HWND — passing it as dialog owner makes Windows treat the
+        // invalid handle as a parent and the dialog deadlocks on close.
+        // Use FindWindow by class+title to resolve the real top-level HWND.
+        IntPtr editorHwnd = FindWindowW(null, windowCi.WindowTitle);
+        if (editorHwnd == IntPtr.Zero)
+            editorHwnd = System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle;
+        FolderPicker.OwnerHwnd = editorHwnd;
+        SceneFilePicker.OwnerHwnd = editorHwnd;
+        Sk8FilePicker.OwnerHwnd = editorHwnd;
 
         GraphicsDeviceOptions gdOptions = new(
             debug: false,
@@ -245,6 +250,9 @@ public static class Program
 
     [System.Runtime.InteropServices.DllImport("kernel32")]
     private static extern bool AllocConsole();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr FindWindowW(string? lpClassName, string? lpWindowName);
 
     /// Lay out a full-window invisible host window with a dockspace inside it.
     /// Every dockable panel that calls <c>ImGui.Begin()</c> after this docks
