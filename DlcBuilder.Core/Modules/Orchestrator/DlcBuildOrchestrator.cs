@@ -1115,7 +1115,7 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
         // this step — the loose .psg shipped but the .psf didn't, so the engine
         // saw NULL for race gates and crashed downstream in the Lua-VM race
         // state-graph (sub_24E56C strncasecmp 0x8 = stale raw bin offset).
-        int psfMissionFolderCount = otsCount + raceSpecs.Count;
+        int psfMissionFolderCount = otsCount + raceSpecs.Count + skateSpecs.Count;
         if (options.PackOtsPsf && psfMissionFolderCount > 0)
         {
             string missionsRoot = Path.Combine(stagingDataDir, "content", "missions");

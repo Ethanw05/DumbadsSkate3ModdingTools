@@ -6,6 +6,17 @@ namespace ChallengeEditor;
 /// reference via UseWindowsForms=true). Returns null on cancel.
 public static class SceneFilePicker
 {
+    /// Editor HWND used as dialog parent so WinForms pump nests under SDL's pump.
+    public static System.IntPtr OwnerHwnd { get; set; } = System.IntPtr.Zero;
+
+    private sealed class NativeOwner : IWin32Window
+    {
+        public System.IntPtr Handle { get; }
+        public NativeOwner(System.IntPtr h) { Handle = h; }
+    }
+
+    private static IWin32Window? Owner() => OwnerHwnd == System.IntPtr.Zero ? null : new NativeOwner(OwnerHwnd);
+
     private const string FilterText = "Challenge Editor Scene (*.cescn)|*.cescn|All Files (*.*)|*.*";
     private const string DefaultExt = "cescn";
 
@@ -21,7 +32,7 @@ public static class SceneFilePicker
         };
         if (!string.IsNullOrWhiteSpace(initialPath) && File.Exists(initialPath))
             dlg.FileName = initialPath;
-        return dlg.ShowDialog() == DialogResult.OK ? dlg.FileName : null;
+        return dlg.ShowDialog(Owner()) == DialogResult.OK ? dlg.FileName : null;
     }
 
     public static string? PickSave(string title, string? initialPath = null)
@@ -36,6 +47,6 @@ public static class SceneFilePicker
         };
         if (!string.IsNullOrWhiteSpace(initialPath))
             dlg.FileName = initialPath;
-        return dlg.ShowDialog() == DialogResult.OK ? dlg.FileName : null;
+        return dlg.ShowDialog(Owner()) == DialogResult.OK ? dlg.FileName : null;
     }
 }

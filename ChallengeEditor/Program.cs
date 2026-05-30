@@ -74,6 +74,13 @@ public static class Program
             WindowInitialState = WindowState.Normal,
         };
         Sdl2Window window = VeldridStartup.CreateWindow(ref windowCi);
+        // Parent file/folder pickers under the editor HWND so their COM/WinForms pumps
+        // nest under our pump instead of racing it. Without this, certain selection
+        // patterns freeze the editor (FolderPicker selecting from INSIDE a folder;
+        // SceneFilePicker re-open going black).
+        FolderPicker.OwnerHwnd = window.Handle;
+        SceneFilePicker.OwnerHwnd = window.Handle;
+        Sk8FilePicker.OwnerHwnd = window.Handle;
 
         GraphicsDeviceOptions gdOptions = new(
             debug: false,

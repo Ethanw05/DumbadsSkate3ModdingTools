@@ -7,6 +7,16 @@ namespace ChallengeEditor;
 /// via <c>UseWindowsForms=true</c>). Returns null on cancel.
 public static class Sk8FilePicker
 {
+    public static System.IntPtr OwnerHwnd { get; set; } = System.IntPtr.Zero;
+
+    private sealed class NativeOwner : IWin32Window
+    {
+        public System.IntPtr Handle { get; }
+        public NativeOwner(System.IntPtr h) { Handle = h; }
+    }
+
+    private static IWin32Window? Owner() => OwnerHwnd == System.IntPtr.Zero ? null : new NativeOwner(OwnerHwnd);
+
     private const string FilterText = "Sk8 Map (*.sk8)|*.sk8|All Files (*.*)|*.*";
     private const string DefaultExt = "sk8";
 
@@ -22,6 +32,6 @@ public static class Sk8FilePicker
         };
         if (!string.IsNullOrWhiteSpace(initialPath) && File.Exists(initialPath))
             dlg.FileName = initialPath;
-        return dlg.ShowDialog() == DialogResult.OK ? dlg.FileName : null;
+        return dlg.ShowDialog(Owner()) == DialogResult.OK ? dlg.FileName : null;
     }
 }
