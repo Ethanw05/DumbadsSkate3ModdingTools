@@ -3312,20 +3312,10 @@ public sealed class EditorUi
                     totalVerts += m.Positions.Length / 3;
                     totalTris += m.Indices.Length / 3;
                     meshesFromThisFile++;
-
-                    // Drain in-flight uploads every 16 meshes so the Vulkan
-                    // command pool + descriptor pool don't blow up on
-                    // big DIST imports (sat ~250+ meshes triggered ImGui
-                    // black-screen post-load).
-                    if ((totalMeshes & 0xF) == 0)
-                        _renderer.GraphicsDevice.WaitForIdle();
                 }
             }
             if (meshesFromThisFile > 0) filesWithMeshes++;
         }
-
-        // Final drain so subsequent ImGui frames see all resources ready.
-        _renderer.GraphicsDevice.WaitForIdle();
 
         watch.Stop();
         return new MeshLoadStats(totalMeshes, totalVerts, totalTris, filesScanned, filesWithMeshes, chunkErrors, watch.ElapsedMilliseconds);
@@ -3400,8 +3390,7 @@ public sealed class EditorUi
             // meshes need explicit cleanup.
             System.IO.File.AppendAllText(@"C:\Users\Ethans Desktop 2.0\Desktop\editor_open_scene.log", $"\n[{DateTime.Now:HH:mm:ss.fff}] fullPath={fullPath}");
             DisposeAllMeshes();
-            _renderer.GraphicsDevice.WaitForIdle();
-            System.IO.File.AppendAllText(@"C:\Users\Ethans Desktop 2.0\Desktop\editor_open_scene.log", $"\n[{DateTime.Now:HH:mm:ss.fff}] disposed + WaitForIdle");
+            System.IO.File.AppendAllText(@"C:\Users\Ethans Desktop 2.0\Desktop\editor_open_scene.log", $"\n[{DateTime.Now:HH:mm:ss.fff}] disposed");
             SceneSerializer.Load(_scene, fullPath);
             System.IO.File.AppendAllText(@"C:\Users\Ethans Desktop 2.0\Desktop\editor_open_scene.log", $"\n[{DateTime.Now:HH:mm:ss.fff}] Load done; Dists={_scene.Dists.Count} GlbMaps={_scene.GlbMaps.Count}");
             SceneSerializer.ResolveDistFolderPaths(_scene, fullPath);
