@@ -3388,8 +3388,12 @@ public sealed class EditorUi
             // Dispose GPU mesh resources before clearing — SceneSerializer.Load
             // replaces _scene.Dists wholesale and the GPU buffers on outgoing
             // meshes need explicit cleanup.
+            System.IO.File.AppendAllText(@"C:\Users\Ethans Desktop 2.0\Desktop\editor_open_scene.log", $"\n[{DateTime.Now:HH:mm:ss.fff}] fullPath={fullPath}");
             DisposeAllMeshes();
+            _renderer.GraphicsDevice.WaitForIdle();
+            System.IO.File.AppendAllText(@"C:\Users\Ethans Desktop 2.0\Desktop\editor_open_scene.log", $"\n[{DateTime.Now:HH:mm:ss.fff}] disposed + WaitForIdle");
             SceneSerializer.Load(_scene, fullPath);
+            System.IO.File.AppendAllText(@"C:\Users\Ethans Desktop 2.0\Desktop\editor_open_scene.log", $"\n[{DateTime.Now:HH:mm:ss.fff}] Load done; Dists={_scene.Dists.Count} GlbMaps={_scene.GlbMaps.Count}");
             SceneSerializer.ResolveDistFolderPaths(_scene, fullPath);
             _currentScenePath = fullPath;
             _selected = null;
@@ -3461,6 +3465,8 @@ public sealed class EditorUi
             ? $"; {glbDispatched} GLB(s) re-importing in background" + (glbMissing > 0 ? $", {glbMissing} GLB source file(s) missing" : "")
             : "";
         _statusMessage = $"Opened {fileLabel}: {distPart}{glbPart}.";
+        _needs3DRedraw = true;
+        System.IO.File.AppendAllText(@"C:\Users\Ethans Desktop 2.0\Desktop\editor_open_scene.log", $"\n[{DateTime.Now:HH:mm:ss.fff}] DONE status={_statusMessage}");
     }
 
     /// Save to current path if known and `saveAs=false`; otherwise prompt.
