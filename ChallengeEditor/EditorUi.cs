@@ -3312,10 +3312,20 @@ public sealed class EditorUi
                     totalVerts += m.Positions.Length / 3;
                     totalTris += m.Indices.Length / 3;
                     meshesFromThisFile++;
+
+                    // Drain in-flight uploads every 16 meshes so the Vulkan
+                    // command pool + descriptor pool don't blow up on
+                    // big DIST imports (sat ~250+ meshes triggered ImGui
+                    // black-screen post-load).
+                    if ((totalMeshes & 0xF) == 0)
+                        _renderer.GraphicsDevice.WaitForIdle();
                 }
             }
             if (meshesFromThisFile > 0) filesWithMeshes++;
         }
+
+        // Final drain so subsequent ImGui frames see all resources ready.
+        _renderer.GraphicsDevice.WaitForIdle();
 
         watch.Stop();
         return new MeshLoadStats(totalMeshes, totalVerts, totalTris, filesScanned, filesWithMeshes, chunkErrors, watch.ElapsedMilliseconds);
