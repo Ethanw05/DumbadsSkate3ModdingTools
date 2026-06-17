@@ -31,7 +31,11 @@ public static class FreeskateAreaXmlBuilder
         var centers = new HashSet<(int, int)>();
         if (string.IsNullOrEmpty(distPath) || !Directory.Exists(distPath)) return centers;
 
-        foreach (string file in Directory.EnumerateFiles(distPath, "cPres_*_high*.psf", SearchOption.AllDirectories))
+        // PS3 ships tiles as `cPres_<cx>_<cy>_high*.psf`; Xbox 360 as `.xsf`.
+        // Match both so freeskate tile-center scanning works on either platform.
+        var tileFiles = Directory.EnumerateFiles(distPath, "cPres_*_high*.psf", SearchOption.AllDirectories)
+            .Concat(Directory.EnumerateFiles(distPath, "cPres_*_high*.xsf", SearchOption.AllDirectories));
+        foreach (string file in tileFiles)
         {
             string name = Path.GetFileNameWithoutExtension(file);
             if (name.StartsWith("cPres_Global", StringComparison.OrdinalIgnoreCase)) continue;

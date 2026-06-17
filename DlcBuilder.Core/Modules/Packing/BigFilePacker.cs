@@ -29,11 +29,20 @@ public static class BigFilePacker
         string? OutputBigEdatPath,
         IReadOnlyList<string> Diagnostics);
 
-    /// Packs `&lt;stagingRoot&gt;/data/*` into a `.big.edat` under
-    /// `&lt;outputRoot&gt;/&lt;dlcFolder&gt;/`. `stagingRoot` is the directory CONTAINING
-    /// the `data/` subfolder (NOT the data folder itself).
-    public static PackResult Pack(string stagingRoot, string outputRoot, string packageSlug)
+    // skate3recomp Content-tree constants (see reference_x360_dlc_structure_for_builder).
+    private const string Sk3TitleId = "454108E6";
+    private const string MarketplaceContentType = "00000002";
+    private const string SharedXuid = "0000000000000000";
+
+    /// Packs `&lt;stagingRoot&gt;/data/*` into a package. PS3 (default) → a renamed
+    /// `custom_&lt;slug&gt;.big.edat` under `&lt;outputRoot&gt;/&lt;dlcFolder&gt;/`. Xbox 360 →
+    /// a RAW unencrypted `&lt;slug&gt;_00000000.big` placed in the recomp Content tree
+    /// `&lt;outputRoot&gt;/Content/0000000000000000/454108E6/00000002/&lt;ContentID&gt;/`.
+    /// `stagingRoot` is the directory CONTAINING the `data/` subfolder.
+    public static PackResult Pack(string stagingRoot, string outputRoot, string packageSlug,
+        PlatformProfile? profile = null, string? displayName = null)
     {
+        profile ??= PlatformProfile.Ps3;
         ArgumentException.ThrowIfNullOrWhiteSpace(stagingRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(packageSlug);
@@ -85,12 +94,54 @@ public static class BigFilePacker
             return new PackResult(false, null, diags);
         }
 
-        // Move + rename to .big.edat under the USRDIR-style folder name.
-        string dlcFolderName = PackageSlugToDlcFolderName(slug);
-        string finalFolder = Path.Combine(outputRoot, dlcFolderName);
+        // Move/rename to the final shipping location. PS3: `.big.edat` under a
+        // USRDIR-style folder. Xbox 360: a RAW `.big` (no edat) inside the
+        // recomp Content tree, where the enumerator lists the folder and the
+        // game's recipe/bigfile loader reads the unencrypted archive directly.
+        string finalFolder;
+        string finalName;
+        string? xboxContentId = null;
+        if (profile.PackEdatSuffix)
+        {
+            finalFolder = Path.Combine(outputRoot, PackageSlugToDlcFolderName(slug));
+            finalName = PackageSlugToFinalBigEdatFileName(slug);
+        }
+        else
+        {
+            // ContentID folder = uppercased slug (the recomp's enumerator falls
+            // back to the folder name when no .header is present). Layout is
+            // `<root>/0000000000000000/454108E6/00000002/<ContentID>/` — the
+            // portable content root is the output root itself (NO `Content/`
+            // segment; verified against the recomp's ResolvePackageRoot +
+            // the on-disk Portable tree).
+            string contentId = new string(slug.ToUpperInvariant().Where(char.IsLetterOrDigit).ToArray());
+            if (contentId.Length == 0) contentId = "CUSTOMDLC";
+            xboxContentId = contentId;
+            string titleRoot = ResolveXboxTitleRoot(outputRoot);
+            finalFolder = Path.Combine(titleRoot, MarketplaceContentType, contentId);
+            finalName = $"{slug}_00000000.big";
+        }
         Directory.CreateDirectory(finalFolder);
-        string finalPath = Path.Combine(finalFolder, PackageSlugToFinalBigEdatFileName(slug));
+        string finalPath = Path.Combine(finalFolder, finalName);
         File.Copy(bigPath, finalPath, overwrite: true);
+
+        // Xbox 360: also write the content `.header` (a raw XCONTENT_AGGREGATE_DATA
+        // blob) the recomp's content enumerator needs to register + mount the
+        // folder. Without it the folder isn't enumerated like the stock DLCs, so
+        // its `.big` never gets globbed/loaded. See content_manager.h.
+        if (xboxContentId is not null)
+        {
+            try
+            {
+                string headerPath = WriteXboxContentHeader(ResolveXboxTitleRoot(outputRoot), xboxContentId,
+                    string.IsNullOrWhiteSpace(displayName) ? xboxContentId : displayName!);
+                diags.Add($"wrote content header {headerPath}");
+            }
+            catch (Exception ex)
+            {
+                diags.Add($"warning: failed to write content .header: {ex.Message}");
+            }
+        }
         try { File.Delete(bigPath); }
         catch (Exception ex) { diags.Add($"warning: temp BIG cleanup failed: {ex.Message}"); }
 
@@ -117,6 +168,62 @@ public static class BigFilePacker
         if (core.Length > maxCore)
             core = core[..maxCore].TrimEnd('_');
         return $"custom_{core}.big.edat";
+    }
+
+    /// Writes the recomp content `.header` for an Xbox DLC: a raw big-endian
+    /// `XCONTENT_AGGREGATE_DATA` blob (0x148 bytes) the content enumerator reads
+    /// (memcpy) to register the folder. Layout (rexglue content_manager.h):
+    ///   0x00 be u32 device_id (1 = HDD)        0x04 be u32 content_type (2 = marketplace)
+    ///   0x08 char16[128] display_name (BE)     0x108 char[42] file_name (= ContentID/folder)
+    ///   0x132 u8[2] pad                         0x134 be u64 xuid (0 = shared)
+    ///   0x13C be u32 title_id (454108E6)        → padded to 0x148.
+    /// Path: &lt;titleRoot&gt;/Headers/00000002/&lt;ContentID&gt;.header, where titleRoot ends in `454108E6`.
+    private static string WriteXboxContentHeader(string titleRoot, string contentId, string displayName)
+    {
+        const int Size = 0x148;
+        var buf = new byte[Size];
+
+        void Be32(int off, uint v) { buf[off] = (byte)(v >> 24); buf[off + 1] = (byte)(v >> 16); buf[off + 2] = (byte)(v >> 8); buf[off + 3] = (byte)v; }
+
+        Be32(0x00, 1u);                          // device_id = HDD
+        Be32(0x04, 2u);                          // content_type = marketplace
+        // display_name: UTF-16 big-endian, max 127 chars, null-terminated.
+        string disp = displayName.Length > 127 ? displayName[..127] : displayName;
+        for (int i = 0; i < disp.Length; i++)
+        {
+            char c = disp[i];
+            buf[0x08 + i * 2] = (byte)(c >> 8);
+            buf[0x08 + i * 2 + 1] = (byte)c;
+        }
+        // file_name (ASCII, max 41 chars, 42-byte field) — MUST equal the folder
+        // name so the enumerator/loader resolves the content path.
+        string fn = contentId.Length > 41 ? contentId[..41] : contentId;
+        for (int i = 0; i < fn.Length; i++) buf[0x108 + i] = (byte)fn[i];
+        // xuid (0x134) = 0 shared; title_id (0x13C) = Skate 3.
+        Be32(0x13C, 0x454108E6u);
+
+        string headerDir = Path.Combine(titleRoot, "Headers", MarketplaceContentType);
+        Directory.CreateDirectory(headerDir);
+        string headerPath = Path.Combine(headerDir, contentId + ".header");
+        File.WriteAllBytes(headerPath, buf);
+        return headerPath;
+    }
+
+    /// Resolves the `454108E6` title folder from whatever the user picked, so both the
+    /// content `.big` and the `.header` anchor to the same place. Accepts:
+    ///   • the title folder itself     (…\0000000000000000\454108E6)        → used as-is
+    ///   • the shared-XUID folder      (…\0000000000000000)                  → +454108E6
+    ///   • the Portable content root   (…\Portable, contains 0000000000000000) → +0000000000000000\454108E6
+    /// Final layout is always &lt;titleRoot&gt;\00000002\&lt;ContentID&gt;\ and &lt;titleRoot&gt;\Headers\00000002\&lt;ContentID&gt;.header.
+    private static string ResolveXboxTitleRoot(string outputRoot)
+    {
+        string trimmed = outputRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string leaf = Path.GetFileName(trimmed);
+        if (string.Equals(leaf, Sk3TitleId, StringComparison.OrdinalIgnoreCase))
+            return trimmed;                                       // …\454108E6
+        if (string.Equals(leaf, SharedXuid, StringComparison.OrdinalIgnoreCase))
+            return Path.Combine(trimmed, Sk3TitleId);             // …\0000000000000000
+        return Path.Combine(trimmed, SharedXuid, Sk3TitleId);     // Portable root
     }
 
     private static string? FindBigFileExe()

@@ -1,4 +1,5 @@
 using ArenaBuilder.Core;
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 using ArenaBuilder.Core.Psg;
 
 namespace DlcBuilder.Modules.LocatorPsg;
@@ -58,7 +59,7 @@ public static class LocatorPsgBuilder
     };
 
     /// Build and write a locator `.psg` file.
-    public static void Write(string locName, byte[] locDescPayload, ulong locatorGuid, Stream output)
+    public static void Write(string locName, byte[] locDescPayload, ulong locatorGuid, Stream output, ArenaPlatform platform = ArenaPlatform.Ps3)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(locName);
         ArgumentNullException.ThrowIfNull(locDescPayload);
@@ -94,7 +95,7 @@ public static class LocatorPsgBuilder
             CompactTextureSectionLayout = false,
         };
 
-        GenericArenaWriter.Write(spec, output);
+        GeneralArenaBuilder.Write(spec, output, platform);
     }
 
     /// Convenience: returns Lookup8 of the locator name as a 64-bit GUID. Used

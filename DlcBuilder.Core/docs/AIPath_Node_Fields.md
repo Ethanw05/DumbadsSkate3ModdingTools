@@ -39,7 +39,7 @@ The recorder fills a Node every frame in `Node::Set(node, physOut, isCrouching, 
 
 | Bit | Setter | Source module |
 |---|---|---|
-| IsBoardFlipped | `SetIsBoardFlipped` | **PhysOut_SkateboardReckoning** — `mIsTransformFlipped` |
+| IsBoardFlipped | `SetIsBoardFlipped` | **PhysOut_SkateboardReckoning** — `mIsTransformFlipped`. NOT a flip *trick* — this is the board's transform-reversed flag, observed = 1 when riding **fakie** (board travelling tail-first). Encodes the skater's fakie stance at the node. |
 | IsCrouched | `SetIsCrouched` | *caller-supplied* — the `isCrouching` argument the recorder passes in |
 | IsAirborne | `SetIsAirborne` | **PhysOut_Air** — `mIsSkateboardAirborne` |
 | IsOffBoard | `SetIsOffBoard` | **PhysOut_State** (`mPhysicsStateCategory == OFFBOARD`) **OR PhysOut_Animation** (`mTransitioningOnOffBoard`) |

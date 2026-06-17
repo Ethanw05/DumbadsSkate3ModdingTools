@@ -28,11 +28,13 @@ namespace DlcBuilder.Modules.Race;
 /// (note: stock ships all 12 stubs; we ship only 8 by your direction).
 public static class RaceMissionFolderWriter
 {
-    public static void Write(RaceChallengeSpec spec, string outputDirectory, IList<string> writtenFiles)
+    public static void Write(RaceChallengeSpec spec, string outputDirectory, IList<string> writtenFiles,
+        PlatformProfile? profile = null)
     {
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputDirectory);
         ArgumentNullException.ThrowIfNull(writtenFiles);
+        profile ??= PlatformProfile.Ps3;
 
         string missionDir = Path.Combine(outputDirectory, "content", "missions", spec.ChallengeKey);
         Directory.CreateDirectory(missionDir);
@@ -69,7 +71,7 @@ public static class RaceMissionFolderWriter
         string cSimDir = Path.Combine(missionDir, "cSim_Global");
         Directory.CreateDirectory(cSimDir);
         ulong psgHash = Lookup8Hash.HashString($"{spec.ChallengeKey}_cSim_Global");
-        string psgPath = Path.Combine(cSimDir, $"{psgHash:X16}.psg");
+        string psgPath = Path.Combine(cSimDir, $"{psgHash:X16}{profile.PsgExt}");
 
         // Synthesize OtsTriggerVolume per race gate. The OTS PSG builder
         // accepts arbitrary convex polygons; we feed the gate's AABB as a
@@ -165,7 +167,7 @@ public static class RaceMissionFolderWriter
         }
 
         using (var fs = File.Create(psgPath))
-            OtsPsgBytesBuilder.Build(spec.ChallengeKey, otsTriggers, locators, fs);
+            OtsPsgBytesBuilder.Build(spec.ChallengeKey, otsTriggers, locators, fs, profile.Arena);
         writtenFiles.Add(psgPath);
     }
 

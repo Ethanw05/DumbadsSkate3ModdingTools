@@ -26,7 +26,7 @@ public static class OtsPsfPacker
     /// `cSim_Global` subfolder, run Stream File Tool to pack the folder into
     /// `cSim_Global.psf`. On success the source folder is removed (matches
     /// shipping retail layout: only the .psf, no subfolder).
-    public static PackResult PackAll(string missionsRoot)
+    public static PackResult PackAll(string missionsRoot, string streamToolPlatform = "p")
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(missionsRoot);
         var diags = new List<string>();
@@ -44,6 +44,12 @@ public static class OtsPsfPacker
         }
         diags.Add($"using {Path.GetFileName(toolPath)} from {Path.GetDirectoryName(toolPath)}");
 
+        // The Stream File Tool emits a platform-specific container: PS3 (--platform=p)
+        // → cSim_Global.psf; Xbox 360 (--platform=x) → cSim_Global.xsf. The success
+        // signal is the existence of that file (the tool is a GUI app repurposed as a
+        // CLI and exits with heap-teardown garbage like 0xC0000374 even on success).
+        string psfExt = string.Equals(streamToolPlatform, "x", StringComparison.OrdinalIgnoreCase) ? "xsf" : "psf";
+
         int packed = 0, failed = 0;
         foreach (string missionDir in Directory.EnumerateDirectories(missionsRoot))
         {
@@ -51,9 +57,9 @@ public static class OtsPsfPacker
             if (!Directory.Exists(cSimDir)) continue;
 
             string missionName = Path.GetFileName(missionDir);
-            string psfPath = Path.Combine(missionDir, "cSim_Global.psf");
+            string psfPath = Path.Combine(missionDir, $"cSim_Global.{psfExt}");
 
-            RunPack(toolPath, missionDir, diags);
+            RunPack(toolPath, missionDir, diags, streamToolPlatform);
 
             if (!File.Exists(psfPath))
             {
@@ -77,7 +83,7 @@ public static class OtsPsfPacker
         return DlcBuilder.Modules.PsfPacker.StreamToolRunner.Locate();
     }
 
-    private static bool RunPack(string exePath, string missionFolder, List<string> diags)
+    private static bool RunPack(string exePath, string missionFolder, List<string> diags, string streamToolPlatform = "p")
     {
         var psi = new ProcessStartInfo
         {
@@ -91,7 +97,7 @@ public static class OtsPsfPacker
         psi.ArgumentList.Add("pack");
         psi.ArgumentList.Add($"--folder={missionFolder}");
         psi.ArgumentList.Add("--type=sim");
-        psi.ArgumentList.Add("--platform=p");
+        psi.ArgumentList.Add($"--platform={streamToolPlatform}");
 
         try
         {

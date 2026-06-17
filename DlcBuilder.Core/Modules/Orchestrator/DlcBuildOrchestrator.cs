@@ -60,6 +60,13 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
         var diagnostics = new List<Diagnostic>();
         var written = new List<string>();
 
+        // Per-platform knobs (arena format, file extensions, stream-tool flag,
+        // edat-vs-raw .big). PS3 keeps the historical behaviour byte-for-byte.
+        var profile = PlatformProfile.For(options.Platform);
+        diagnostics.Add(new(DiagnosticLevel.Info, "Orchestrator",
+            $"Target platform: {options.Platform} (arena={profile.Arena}, psgExt={profile.PsgExt}, " +
+            $"edat={profile.PackEdatSuffix})."));
+
         // Staging matches MinimalDlcBuilder's layout: build intermediate files
         // in `<exeFolder>/data/`, NOT under the user's output folder. The user's
         // output folder receives ONLY the final `<DlcFolder>/custom_<slug>.big.edat`.
@@ -666,7 +673,7 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
                     $"[{skate.ChallengeKey}] Wrote per-instance Skate VLT ({sd.VltBytes.Length}B) + BIN ({sd.BinBytes.Length}B)."));
 
                 // Per-spot mission folder (Pres+Tex stubs + cSim_Global PSG).
-                Skate.SkateMissionFolderWriter.Write(skate, stagingDataDir, written);
+                Skate.SkateMissionFolderWriter.Write(skate, stagingDataDir, written, profile);
             }
             catch (Exception ex)
             {
@@ -708,7 +715,7 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
         {
             try
             {
-                RaceMissionFolderWriter.Write(race, stagingDataDir, written);
+                RaceMissionFolderWriter.Write(race, stagingDataDir, written, profile);
                 diagnostics.Add(new(DiagnosticLevel.Info, "RaceMission",
                     $"[{race.ChallengeKey}] Wrote Pres/Tex stubs + cSim_Global PSG ({race.TotalGateCount} gates)."));
             }
@@ -907,7 +914,7 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
                 // One global_locator PSG per race.
                 var mapRaces = raceSpecs.Where(r => r.Spec.DistKey == mapSpec3.DistKey)
                                         .Select(r => r.Race).ToList();
-                WorldLocatorFilesWriter.Write(mapSpec3, stagingDataDir, mapOts, mapRaces, written);
+                WorldLocatorFilesWriter.Write(mapSpec3, stagingDataDir, mapOts, mapRaces, written, profile);
             }
             catch (Exception ex)
             {
@@ -948,8 +955,8 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
                         string feLocationsDir = Path.Combine(stagingDataDir, "fe", "source", "images", "locations");
                         Directory.CreateDirectory(feLocationsDir);
                         string feBase = FeLocationNaming.FeLocationAssetBaseName(mapSpec3.Slug);
-                        string feDest = Path.Combine(feLocationsDir, feBase + ".rps3");
-                        FeLocationImageWriter.WriteFromImageFile(src, feDest, feBase);
+                        string feDest = Path.Combine(feLocationsDir, feBase + profile.FeImageExt);
+                        FeLocationImageWriter.WriteFromImageFile(src, feDest, feBase, profile.Arena);
                         written.Add(feDest);
                     }
                 }
@@ -1050,7 +1057,7 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
 
                 // Mission folder writer handles the Sim.loc, loose .loc, PSG
                 // body, and 12 manifest stubs.
-                OtsMissionFolderWriter.Write(spec, stagingDataDir, written);
+                OtsMissionFolderWriter.Write(spec, stagingDataDir, written, profile);
             }
             catch (Exception ex)
             {
@@ -1119,7 +1126,7 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
         if (options.PackOtsPsf && psfMissionFolderCount > 0)
         {
             string missionsRoot = Path.Combine(stagingDataDir, "content", "missions");
-            var psfResult = OtsPsfPacker.PackAll(missionsRoot);
+            var psfResult = OtsPsfPacker.PackAll(missionsRoot, profile.StreamToolPlatform);
             foreach (string d in psfResult.Diagnostics)
                 diagnostics.Add(new(DiagnosticLevel.Info, "OtsPsfPacker", d));
             if (psfResult.Failed > 0)
@@ -1137,7 +1144,7 @@ public sealed class DlcBuildOrchestrator : IDlcBuilder
         // no loose `data/` tree gets dumped into it.
         if (options.PackBig)
         {
-            var bigResult = BigFilePacker.Pack(stagingRoot, outputDirectory, manifest.PackageSlug);
+            var bigResult = BigFilePacker.Pack(stagingRoot, outputDirectory, manifest.PackageSlug, profile, input.PackageName);
             foreach (string d in bigResult.Diagnostics)
                 diagnostics.Add(new(DiagnosticLevel.Info, "BigFilePacker", d));
 

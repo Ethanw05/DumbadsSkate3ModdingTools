@@ -42,11 +42,13 @@ public static class WorldLocatorFilesWriter
         string outputDirectory,
         IReadOnlyList<OtsChallengeSpec>? otsChallenges,
         IReadOnlyList<RaceChallengeSpec>? raceChallenges,
-        IList<string> writtenFiles)
+        IList<string> writtenFiles,
+        PlatformProfile? profile = null)
     {
         ArgumentNullException.ThrowIfNull(map);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputDirectory);
         ArgumentNullException.ThrowIfNull(writtenFiles);
+        profile ??= PlatformProfile.Ps3;
 
         string locatorDir = Path.Combine(
             outputDirectory, "content", "global_locators", "DLC_BAM", map.WorldStreamName);
@@ -95,7 +97,7 @@ public static class WorldLocatorFilesWriter
         string filePrefix = streamName.Length > 12 ? streamName[..12] : streamName;
 
         // Main freeskate locator
-        WriteLocatorPair(locatorDir, filePrefix, locatorName, locatorGuid, payload, mainTransform, writtenFiles);
+        WriteLocatorPair(locatorDir, filePrefix, locatorName, locatorGuid, payload, mainTransform, writtenFiles, profile);
 
         // Z_<Slug>_Start — second locator psg/loc for the world Start spawn.
         // The world/fe_locations row's FELayout spawn field points at this name;
@@ -110,7 +112,7 @@ public static class WorldLocatorFilesWriter
             Guid: startGuid,
             SubLocations: new List<LocationDescDataBuilder.SubLocSpec>());
         byte[] startPayload = LocationDescDataBuilder.Build(startSpec);
-        WriteLocatorPair(locatorDir, filePrefix, startName, startGuid, startPayload, mainTransform, writtenFiles);
+        WriteLocatorPair(locatorDir, filePrefix, startName, startGuid, startPayload, mainTransform, writtenFiles, profile);
 
         // Per-OTS global_locator PSG — anchor as TOP-LEVEL tLocationDesc with
         // 6 lobby-style spawn slots (`<anchor>::<key>_spawn_<n>`). Verified
@@ -140,11 +142,11 @@ public static class WorldLocatorFilesWriter
                 byte[] otsPayload = LocationDescDataBuilder.Build(otsLocSpec);
 
                 string otsBase = filePrefix + "_[0x" + Lookup8Hash.HashStringToHex(ots.AnchorName).ToLowerInvariant() + "]";
-                string otsPsg = Path.Combine(locatorDir, otsBase + ".psg");
+                string otsPsg = Path.Combine(locatorDir, otsBase + profile.PsgExt);
                 string otsLoc = Path.Combine(locatorDir, otsBase + ".loc");
 
                 using (var fs = File.Create(otsPsg))
-                    LocatorPsgBuilder.Write(ots.AnchorName, otsPayload, otsGuid, fs);
+                    LocatorPsgBuilder.Write(ots.AnchorName, otsPayload, otsGuid, fs, profile.Arena);
                 writtenFiles.Add(otsPsg);
 
                 // Sibling .loc XML — anchor only (DW's per-OTS .loc carries
@@ -185,11 +187,11 @@ public static class WorldLocatorFilesWriter
 
                 string raceBase = filePrefix + "_[0x"
                     + Lookup8Hash.HashStringToHex(raceAnchorName).ToLowerInvariant() + "]";
-                string racePsg = Path.Combine(locatorDir, raceBase + ".psg");
+                string racePsg = Path.Combine(locatorDir, raceBase + profile.PsgExt);
                 string raceLoc = Path.Combine(locatorDir, raceBase + ".loc");
 
                 using (var fs = File.Create(racePsg))
-                    LocatorPsgBuilder.Write(raceAnchorName, racePayload, raceGuid, fs);
+                    LocatorPsgBuilder.Write(raceAnchorName, racePayload, raceGuid, fs, profile.Arena);
                 writtenFiles.Add(racePsg);
 
                 File.WriteAllText(raceLoc,
@@ -372,14 +374,15 @@ public static class WorldLocatorFilesWriter
         ulong locGuid,
         byte[] payload,
         Transform44 transform,
-        IList<string> writtenFiles)
+        IList<string> writtenFiles,
+        PlatformProfile profile)
     {
         string baseName = filePrefix + "_[0x" + Lookup8Hash.HashStringToHex(locName).ToLowerInvariant() + "]";
-        string psgPath = Path.Combine(locatorDir, baseName + ".psg");
+        string psgPath = Path.Combine(locatorDir, baseName + profile.PsgExt);
         string locPath = Path.Combine(locatorDir, baseName + ".loc");
 
         using (var fs = File.Create(psgPath))
-            LocatorPsgBuilder.Write(locName, payload, locGuid, fs);
+            LocatorPsgBuilder.Write(locName, payload, locGuid, fs, profile.Arena);
         writtenFiles.Add(psgPath);
 
         File.WriteAllText(locPath, LocXmlBuilder.Build(locName, transform), Utf8NoBom);

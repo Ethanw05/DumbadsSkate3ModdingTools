@@ -21,11 +21,13 @@ namespace DlcBuilder.Modules.Skate;
 /// is independent of challenge type.
 public static class SkateMissionFolderWriter
 {
-    public static void Write(SkateChallengeSpec spec, string outputDirectory, IList<string> writtenFiles)
+    public static void Write(SkateChallengeSpec spec, string outputDirectory, IList<string> writtenFiles,
+        PlatformProfile? profile = null)
     {
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputDirectory);
         ArgumentNullException.ThrowIfNull(writtenFiles);
+        profile ??= PlatformProfile.Ps3;
 
         string missionDir = Path.Combine(outputDirectory, "content", "missions", spec.ChallengeKey);
         Directory.CreateDirectory(missionDir);
@@ -52,7 +54,7 @@ public static class SkateMissionFolderWriter
         string cSimDir = Path.Combine(missionDir, "cSim_Global");
         Directory.CreateDirectory(cSimDir);
         ulong psgHash = Lookup8Hash.HashString($"{spec.ChallengeKey}_cSim_Global");
-        string psgPath = Path.Combine(cSimDir, $"{psgHash:X16}.psg");
+        string psgPath = Path.Combine(cSimDir, $"{psgHash:X16}{profile.PsgExt}");
 
         var triggers = new List<OtsTriggerVolume>();
         triggers.Add(BuildTriggerVolume(spec.Map.WorldStreamName, spec.ChallengeBoundary));
@@ -92,7 +94,7 @@ public static class SkateMissionFolderWriter
         }
 
         using (var fs = File.Create(psgPath))
-            OtsPsgBytesBuilder.Build(spec.ChallengeKey, triggers, locators, fs);
+            OtsPsgBytesBuilder.Build(spec.ChallengeKey, triggers, locators, fs, profile.Arena);
         writtenFiles.Add(psgPath);
     }
 

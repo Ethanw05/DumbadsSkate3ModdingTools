@@ -23,6 +23,13 @@ public sealed record BuildOptions
     /// users can inspect what was built.
     public bool CleanStagingAfterPack { get; init; }
 
+    /// Target console. <see cref="DlcPlatform.Ps3"/> (default) builds the loose
+    /// tree + `custom_&lt;slug&gt;.big.edat` for RPCS3/real PS3. <see cref="DlcPlatform.Xbox360"/>
+    /// targets the skate3recomp: generated arenas as `.rx2`, the package packed
+    /// into a raw unencrypted `&lt;slug&gt;_00000000.big` (NO `.edat`), placed in the
+    /// recomp Content tree under `…\454108E6\00000002\&lt;ContentID&gt;\`.
+    public DlcPlatform Platform { get; init; } = DlcPlatform.Ps3;
+
     /// Convenience: stage + pack both BIG and OTS PSFs in one shot.
     public static BuildOptions FullPack { get; } = new() { PackBig = true, PackOtsPsf = true };
 }

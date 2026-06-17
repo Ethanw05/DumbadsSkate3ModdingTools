@@ -23,11 +23,13 @@ public static class OtsMissionFolderWriter
     private const ulong ProcContainerTypeId = 0x0000008003e38704UL;
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
-    public static void Write(OtsChallengeSpec spec, string outputDirectory, IList<string> writtenFiles)
+    public static void Write(OtsChallengeSpec spec, string outputDirectory, IList<string> writtenFiles,
+        PlatformProfile? profile = null)
     {
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputDirectory);
         ArgumentNullException.ThrowIfNull(writtenFiles);
+        profile ??= PlatformProfile.Ps3;
 
         string missionDir = Path.Combine(outputDirectory, "content", "missions", spec.ChallengeKey);
         Directory.CreateDirectory(missionDir);
@@ -116,7 +118,7 @@ public static class OtsMissionFolderWriter
         string cSimDir = Path.Combine(missionDir, "cSim_Global");
         Directory.CreateDirectory(cSimDir);
         ulong psgHash = Lookup8Hash.HashString($"{spec.ChallengeKey}_cSim_Global");
-        string psgPath = Path.Combine(cSimDir, $"{psgHash:X16}.psg");
+        string psgPath = Path.Combine(cSimDir, $"{psgHash:X16}{profile.PsgExt}");
 
         // Each named OTS sub-locator (optional chev_*, vis_*, startlocator,
         // waitlocator) becomes an INDEPENDENT top-level tLocationDesc.
@@ -132,7 +134,7 @@ public static class OtsMissionFolderWriter
         var locators = OtsLocatorPlanner.PlanMissionPsgLocators(spec);
 
         using (var fs = File.Create(psgPath))
-            OtsPsgBytesBuilder.Build(spec.ChallengeKey, spec.Triggers, locators, fs);
+            OtsPsgBytesBuilder.Build(spec.ChallengeKey, spec.Triggers, locators, fs, profile.Arena);
         writtenFiles.Add(psgPath);
     }
 }

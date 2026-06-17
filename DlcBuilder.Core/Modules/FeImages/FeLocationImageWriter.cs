@@ -1,3 +1,4 @@
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 using ArenaBuilder.Core.Psg;
 using ArenaBuilder.Texture;
 using ArenaBuilder.Texture.Dds;
@@ -21,7 +22,8 @@ public static class FeLocationImageWriter
     public static void WriteFromImageFile(
         string imagePath,
         string outputRps3Path,
-        string feLocationAssetBaseName)
+        string feLocationAssetBaseName,
+        ArenaPlatform platform = ArenaPlatform.Ps3)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(feLocationAssetBaseName);
@@ -65,7 +67,7 @@ public static class FeLocationImageWriter
         if (!string.IsNullOrEmpty(dir))
             Directory.CreateDirectory(dir);
         using FileStream fs = File.Create(outputRps3Path);
-        GenericArenaWriter.Write(spec, fs);
+        GeneralArenaBuilder.Write(spec, fs, platform);
     }
 
     private static DdsTextureInput NormalizeFeLocationDds(DdsTextureInput d)

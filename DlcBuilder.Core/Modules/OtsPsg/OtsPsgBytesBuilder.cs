@@ -3,8 +3,9 @@ using ArenaBuilder.Collision;
 using ArenaBuilder.Collision.ClusteredMesh;
 using ArenaBuilder.Collision.Serialization;
 using ArenaBuilder.Core;
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Collision;
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Collision;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 using ArenaBuilder.Core.Psg;
 using DlcBuilder.Modules.LocatorPsg;
 
@@ -72,7 +73,8 @@ public static class OtsPsgBytesBuilder
         string challengeKey,
         IReadOnlyList<OtsTriggerVolume> triggers,
         IReadOnlyList<LocationDescDataBuilder.LocSpec> locators,
-        Stream output)
+        Stream output,
+        ArenaPlatform platform = ArenaPlatform.Ps3)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(challengeKey);
         ArgumentNullException.ThrowIfNull(triggers);
@@ -325,7 +327,7 @@ public static class OtsPsgBytesBuilder
             HeaderTypeIdAt0x70 = 1u,   // Sim PSG
         };
 
-        GenericArenaWriter.Write(spec, output);
+        GeneralArenaBuilder.Write(spec, output, platform);
     }
 }
 
