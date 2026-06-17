@@ -1,3 +1,4 @@
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 using ArenaBuilder.NavPower;
 
 namespace ArenaBuilder.Glb;
@@ -5,21 +6,16 @@ namespace ArenaBuilder.Glb;
 /// <summary>
 /// Configuration for tile-based streaming output. Layout:
 /// <list type="bullet">
-///   <item><c>cPres_U_V_high</c> — mesh PSGs for the cPres tile, plus a SMALL (1/8 linear of source)
-///   "fallback" copy of every texture those meshes reference, written under the SMALL-variant GUID
-///   (<c>G | 0x4000_0000_0000_0000</c>; bit 62 set). Always loaded with the geometry so the engine's
-///   bit-62 retry path resolves the fallback whenever the cTex tile isn't paged in.</item>
+///   <item><c>cPres_U_V_high</c> — mesh PSGs for the cPres tile, plus full-resolution texture
+///   PSGs for any texture used by exactly one cPres tile (its owning tile).</item>
+///   <item><c>cPres_Global</c> — full-resolution texture PSGs for any texture shared by two or
+///   more cPres tiles (promoted by <see cref="ArenaBuilder.Build.TexturePlacementPlanner"/>).</item>
 ///   <item><c>cSim_U_V_high</c> — collision data for the cSim tile.</item>
-  ///   <item><c>cTex_X_Y_high</c> — full-res under FULL GUID <c>G</c>. The builder places <c>G</c> in
-  ///   the <b>union</b> of (a) cTex cells overlapping each tile-split mesh AABB, and (b) greedy
-  ///   <see cref="WorldTileGrid.AssignPresTilesToCTexCover"/> homes per cPres, so in-game streaming
-  ///   can resolve full-res, not only the cPres small fallback.</item>
 /// </list>
-/// Mesh material channels reference <c>G</c> (bit 62 clear) in all tiles; the engine tries <c>G</c>
-/// first and on miss ORs <c>0x4000_0000_0000_0000</c> to find the small fallback.
-/// In <see cref="GlobalOnly"/> mode, everything for presentation (meshes + full-resolution textures)
-/// lands in <c>cPres_Global</c> under <c>G</c> and collision in <c>cSim_Global</c>; no cTex folders
-/// or small variants are emitted in that mode.
+/// Mesh material channels reference the FULL GUID <c>G</c>; the engine resolves it via
+/// <c>cPres_Global</c> (always resident) or the local cPres tile (always resident in the 3×3 window).
+/// In <see cref="GlobalOnly"/> mode, all presentation (meshes + textures) lands in
+/// <c>cPres_Global</c> and collision in <c>cSim_Global</c>.
 /// </summary>
 public sealed record TileBuildOptions
 {
@@ -29,19 +25,16 @@ public sealed record TileBuildOptions
     public string TileSuffix { get; init; } = "high";
 
     /// <summary>
-    /// Minimum allowed dimension (px) on the longest side of the small cPres-side fallback texture.
-    /// The small variant is otherwise sized at <c>1 / <see cref="CPresSmallVariantDownscaleFactor"/></c>
-    /// of the source's longest side; this floor prevents tiny sources from collapsing below a usable
-    /// BCn block size. 8 is the minimum that keeps DXT 4×4-block encoding valid on both axes.
+    /// Target console for all emitted PSG/arena files. PS3 writes <c>.psg</c> (magic "ps3");
+    /// Xbox 360 writes <c>.rx2</c> (magic "xb2"). Mesh + texture use the X360-specific composers;
+    /// collision / AIPath / irradiance / NavPower / WorldPainter are cross-platform-clean and only
+    /// differ in the arena header the writer emits.
     /// </summary>
-    public int CPresSmallVariantMinDim { get; init; } = 8;
+    public ArenaPlatform TargetPlatform { get; init; } = ArenaPlatform.Ps3;
 
-    /// <summary>
-    /// Linear downscale factor applied to the cPres-side small fallback variant relative to the source
-    /// texture's longest side. Default of 8 mirrors the empirical 8× linear pairing observed in stock
-    /// Skate <c>DLC_DW_MegaCompund</c> content (e.g. 512×512 ↔ 64×64, 256×128 ↔ 32×16).
-    /// </summary>
-    public int CPresSmallVariantDownscaleFactor { get; init; } = 8;
+    /// <summary>File extension for the target platform: <c>.psg</c> (PS3) or <c>.rx2</c> (Xbox 360).</summary>
+    public string PsgExtension => TargetPlatform == ArenaPlatform.Xbox360 ? ".rx2" : ".psg";
+
     /// <summary>
     /// Safety cap: maximum number of tiles a single triangle is allowed to cover.
     /// Prevents runaway output from corrupt or wildly scaled geometry.
@@ -84,20 +77,8 @@ public sealed record TileBuildOptions
     public const string CSimPrefix = "cSim";
 
     /// <summary>
-    /// cTex prefix for texture stream tiles. cTex tiles hold full-resolution textures keyed by the same
-    /// logical GUID as the small fallback in cPres; the engine streams them on top of cPres at
-    /// runtime (kStreamType_Texture in <c>AssetPaths::tStreamType</c>; suffix table at <c>0x82d5cad8</c>
-    /// maps it to <c>"Tex"</c>). cTex tiles use the half-offset grid (<see cref="WorldTileGrid.CTexTileKey"/>):
-    /// cTex tiles centered at <c>origin + CU * tileSize</c> while cPres tiles are at the half-tile
-    /// offset (<c>origin + (U + 0.5) * tileSize</c>), matching stock content like
-    /// <c>cPres_50_50_high.psf</c> alongside <c>cTex_0_0_high.psf</c>. The engine's tile name
-    /// format <c>c%s_%.f_%.f_high</c> (at <c>0x8229ae50</c>) hashes integer coords deterministically.
-    /// </summary>
-    public const string CTexPrefix = "cTex";
-
-    /// <summary>
-    /// cPres global folder used only by <see cref="GlobalOnly"/> (no tiles). Holds both mesh PSGs and
-    /// texture PSGs as a single self-contained collection.
+    /// cPres global folder used by <see cref="GlobalOnly"/> (no tiles) and by the per-build
+    /// shared-texture collection. Holds both mesh PSGs (in GlobalOnly) and texture PSGs.
     /// </summary>
     public const string CPresGlobalFolder = "cPres_Global";
 

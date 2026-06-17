@@ -1,3 +1,4 @@
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 using ArenaBuilder.Glb;
 using System.Diagnostics;
 using System.Text;
@@ -6,21 +7,7 @@ namespace ArenaBuilder.Build;
 
 /// <summary>
 /// After a tile build: copy DONOTREMOVE/cpres into cPres_Global (engine boilerplate), run Stream File Tool
-/// to pack cPres / cSim / cTex tile folders, then write stream XML manifests for Pres and Tex.
-///
-/// <para>
-/// Texture layout (dual-tier, see <see cref="TileBuildPipeline"/> docs):
-/// </para>
-/// <list type="bullet">
-///   <item>cPres_U_V_high — mesh PSGs + a SMALL 16×16 fallback copy of every texture, keyed by logical GUID.</item>
-///   <item>cTex_X_Y_high — full-resolution copy of every texture whose using-geometry overlaps the cTex
-///   tile's footprint, keyed by the SAME logical GUID. Engine streams it on top of the cPres fallback.</item>
-/// </list>
-///
-/// <para>
-/// The Tex pack call processes whatever cTex_*_high folders the build emitted. Optionally deletes
-/// unpacked folders after pack.
-/// </para>
+/// to pack cPres / cSim tile folders, then write stream XML manifests for Pres and Sim.
 /// </summary>
 public static class DistPackRunner
 {
@@ -28,16 +15,14 @@ public static class DistPackRunner
 
     /// <summary>
     /// Returns true when <paramref name="folderName"/> belongs to a stream tile folder we copy/pack/clean
-    /// (cPres_*, cSim_*, cTex_*). Matches the three engine stream types exposed via
-    /// <c>AssetPaths::tStreamType</c> (kStreamType_Pres / kStreamType_Sim / kStreamType_Texture).
+    /// (cPres_*, cSim_*).
     /// </summary>
     private static bool IsStreamTileFolderName(string folderName) =>
         folderName.StartsWith(TileBuildOptions.CPresPrefix, StringComparison.OrdinalIgnoreCase) ||
-        folderName.StartsWith(TileBuildOptions.CSimPrefix, StringComparison.OrdinalIgnoreCase) ||
-        folderName.StartsWith(TileBuildOptions.CTexPrefix, StringComparison.OrdinalIgnoreCase);
+        folderName.StartsWith(TileBuildOptions.CSimPrefix, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Copy build output (cPres_*, cSim_*, cTex_*, plus *_Global variants) from buildFolder to distRoot.
+    /// Copy build output (cPres_*, cSim_*, plus *_Global variants) from buildFolder to distRoot.
     /// Does not overwrite existing files in distRoot (overwrite: false); merges so DIST can be incrementally updated.
     /// </summary>
     public static void CopyBuildOutputToDist(string buildFolder, string distRoot, Action<string> log)
@@ -64,21 +49,26 @@ public static class DistPackRunner
 
     /// <summary>
     /// Copy template files from DONOTREMOVE/ctex into the DIST root, renaming them to match the
-    /// DIST folder name with a "_Tex" suffix. With the dual-tier scheme the build now produces real
-    /// per-tile cTex output, so this method only fills in any <c>&lt;DIST&gt;_Tex.*</c> file that was
-    /// NOT produced by <see cref="RunStreamPack"/> (it skips when the file already exists).
-    ///
-    /// Critical: must NOT overwrite the freshly packed cTex output — the engine drives texture
-    /// streaming off the world-level <c>&lt;world&gt;_Tex.xsf</c> manifest
-    /// (<c>cGameAssetManager::UpdateGameStreamFileLoaded</c>, 0x82400d30); clobbering it with a
-    /// static template would un-do all the per-tile streaming work.
+    /// DIST folder name with a "_Tex" suffix. The build emits no per-tile texture stream content,
+    /// so the &lt;DIST&gt;_Tex.* manifest files from the template are placed verbatim — the engine
+    /// still expects a Tex stream descriptor to exist even when it lists zero tiles. Skips any
+    /// file already present.
     /// </summary>
-    public static void CopyCtexIntoDistRoot(string donotRemoveDir, string distRoot, Action<string> log)
+    public static void CopyCtexIntoDistRoot(string donotRemoveDir, string distRoot, Action<string> log, ArenaPlatform platform = ArenaPlatform.Ps3)
     {
-        string ctexSource = Path.Combine(donotRemoveDir, "ctex");
+        // The Tex stream descriptor is platform-specific (PS3 .psf vs X360 .rx2/stream). PS3 reads
+        // the canned stub from DONOTREMOVE/ctex; X360 reads it from DONOTREMOVE/ctex_xbox. Without a
+        // matching-platform descriptor the engine waits forever on the missing Tex stream (infinite load).
+        string subFolder = platform == ArenaPlatform.Xbox360 ? "ctex_xbox" : "ctex";
+        string ctexSource = Path.Combine(donotRemoveDir, subFolder);
         if (!Directory.Exists(ctexSource))
         {
-            log($"[DistPack] DONOTREMOVE/ctex not found: {ctexSource}");
+            if (platform == ArenaPlatform.Xbox360)
+                log($"[DistPack] WARNING: DONOTREMOVE/{subFolder} not found ({ctexSource}). " +
+                    "The X360 engine REQUIRES a <DIST>_Tex stream descriptor or the map infinite-loads. " +
+                    "Create DONOTREMOVE/ctex_xbox with the X360 Tex stub (same role as the PS3 ctex stub).");
+            else
+                log($"[DistPack] DONOTREMOVE/{subFolder} not found: {ctexSource}");
             return;
         }
 
@@ -101,7 +91,7 @@ public static class DistPackRunner
             string dstPath = Path.Combine(distFull, dstName);
             if (File.Exists(dstPath))
             {
-                log($"[DistPack] Keeping packed CTEX (skipping DONOTREMOVE template): {dstName}");
+                log($"[DistPack] Keeping existing: {dstName}");
                 continue;
             }
             try
@@ -124,10 +114,15 @@ public static class DistPackRunner
     /// <param name="tileOptions">Optional; when FolderSuffix is set, merge into cPres_Global{FolderSuffix}.</param>
     public static void MergeDonotRemoveIntoCpresGlobal(string donotRemoveDir, string distRoot, Action<string> log, TileBuildOptions? tileOptions = null)
     {
-        string cpresSource = Path.Combine(donotRemoveDir, "cpres");
+        // cPres template PSGs are platform-specific (PS3 .psg vs X360 .rx2). PS3 reads them from
+        // DONOTREMOVE/cpres; X360 from DONOTREMOVE/cpres_xbox. Picking the wrong folder would merge a
+        // wrong-platform texture (e.g. the macro-overlay) into cPres_Global.
+        ArenaPlatform platform = tileOptions?.TargetPlatform ?? ArenaPlatform.Ps3;
+        string subFolder = platform == ArenaPlatform.Xbox360 ? "cpres_xbox" : "cpres";
+        string cpresSource = Path.Combine(donotRemoveDir, subFolder);
         if (!Directory.Exists(cpresSource))
         {
-            log($"[DistPack] DONOTREMOVE/cpres not found: {cpresSource}");
+            log($"[DistPack] DONOTREMOVE/{subFolder} not found: {cpresSource}");
             return;
         }
         string folderSuffix = tileOptions?.FolderSuffix ?? "";
@@ -155,14 +150,11 @@ public static class DistPackRunner
     }
 
     /// <summary>
-    /// Run Stream File Tool.exe to pack PRES, SIM and TEX content under distRoot using the folder-based CLI:
+    /// Run Stream File Tool.exe to pack PRES and SIM content under distRoot using the folder-based CLI:
     ///   Stream File Tool.exe pack --folder="DIST_..." --type=pres --platform=p
     ///   Stream File Tool.exe pack --folder="DIST_..." --type=sim  --platform=p
-    ///   Stream File Tool.exe pack --folder="DIST_..." --type=tex  --platform=p
-    /// The three tokens mirror <c>AssetPaths::tStreamType</c> (kStreamType_Pres / kStreamType_Sim / kStreamType_Texture)
-    /// in the Skate 2 binary; the suffix table at 0x82d5cad8 maps them to "Pres" / "Sim" / "Tex".
     /// </summary>
-    public static void RunStreamPack(string distRoot, string streamToolExePath, Action<string> log, CancellationToken cancellationToken = default)
+    public static void RunStreamPack(string distRoot, string streamToolExePath, Action<string> log, char platform = 'p', CancellationToken cancellationToken = default)
     {
         if (!File.Exists(streamToolExePath))
         {
@@ -178,15 +170,14 @@ public static class DistPackRunner
 
         string toolDir = Path.GetDirectoryName(streamToolExePath) ?? distFull;
 
-        PackStreamTypeIfPresent(distFull, streamToolExePath, toolDir, "Pres", TileBuildOptions.CPresPrefix, "pres", log, cancellationToken);
-        PackStreamTypeIfPresent(distFull, streamToolExePath, toolDir, "Sim",  TileBuildOptions.CSimPrefix,  "sim",  log, cancellationToken);
-        PackStreamTypeIfPresent(distFull, streamToolExePath, toolDir, "Tex",  TileBuildOptions.CTexPrefix,  "tex",  log, cancellationToken);
+        PackStreamTypeIfPresent(distFull, streamToolExePath, toolDir, "Pres", TileBuildOptions.CPresPrefix, "pres", log, platform, cancellationToken);
+        PackStreamTypeIfPresent(distFull, streamToolExePath, toolDir, "Sim",  TileBuildOptions.CSimPrefix,  "sim",  log, platform, cancellationToken);
     }
 
     /// <summary>
     /// Invoke Stream File Tool for a single stream type if any matching <paramref name="folderPrefix"/> folder
     /// or *.psf is present under <paramref name="distFull"/>. <paramref name="toolType"/> is the lowercase
-    /// CLI token (pres / sim / tex).
+    /// CLI token (pres / sim).
     /// </summary>
     private static void PackStreamTypeIfPresent(
         string distFull,
@@ -196,6 +187,7 @@ public static class DistPackRunner
         string folderPrefix,
         string toolType,
         Action<string> log,
+        char platform,
         CancellationToken cancellationToken)
     {
         bool hasPsf = Directory.EnumerateFiles(distFull, folderPrefix + "_*.psf").Any();
@@ -206,11 +198,11 @@ public static class DistPackRunner
 
         cancellationToken.ThrowIfCancellationRequested();
         log($"[DistPack] Running Stream File Tool for {label} (folder-based)...");
-        RunProcess(streamToolExePath, "pack", distFull, toolType, toolDir, log, cancellationToken);
+        RunProcess(streamToolExePath, "pack", distFull, toolType, toolDir, log, platform, cancellationToken);
     }
 
     /// <summary>
-    /// Delete all cPres* / cSim* / cTex* directories under distRoot (after packing).
+    /// Delete all cPres* / cSim* directories under distRoot (after packing).
     /// </summary>
     public static void DeleteUnpackedFolders(string distRoot, Action<string> log)
     {
@@ -235,26 +227,16 @@ public static class DistPackRunner
     }
 
     /// <summary>
-    /// Write stream XML for Pres and Tex tiles. Each StreamTile has a Center (cx, cy) and Tile entries
+    /// Write stream XML for Pres and Sim tiles. Each StreamTile has a Center (cx, cy) and Tile entries
     /// for the 8 neighbors at ±tileSize. Centers are inferred from packed PSF filenames in
-    /// <paramref name="distRoot"/>:
-    /// <list type="bullet">
-    ///   <item><c>cPres_&lt;cx&gt;_&lt;cy&gt;_high.psf</c> -> Pres centers (cPres_Global ignored).</item>
-    ///   <item><c>cTex_&lt;cx&gt;_&lt;cy&gt;_high.psf</c> -> Tex centers.</item>
-    /// </list>
-    /// Output XMLs match the format the engine consumes via <c>cAssetStreamSystem::ParseXmlStreamTile</c>
-    /// (0x824031a0): each StreamTile drives a 3×3 (center + 8 neighbor) load region for its stream type.
+    /// <paramref name="distRoot"/> (<c>cPres_&lt;cx&gt;_&lt;cy&gt;_high.psf</c>; cPres_Global ignored).
     /// </summary>
-    /// <param name="distRoot">DIST root containing cPres_* / cTex_* PSFs (before or after pack).</param>
+    /// <param name="distRoot">DIST root containing cPres_* PSFs (before or after pack).</param>
     /// <param name="mapName">Map name for the output filename. Used directly as the basename:
-    /// <c>&lt;mapName&gt;_Pres.xml</c>, <c>&lt;mapName&gt;_Sim.xml</c>, <c>&lt;mapName&gt;_Tex.xml</c>.
-    /// The engine reads <c>data/stream/&lt;WorldStream&gt;_Pres.xml</c> + <c>_Sim.xml</c> at FE-time
-    /// to discover world content (including locator PSGs) — pass <c>WorldStream</c> as <paramref name="mapName"/>
-    /// so this matches. The legacy <c>dist_</c> prefix was wrong: stock and DW ship the bare
-    /// <c>&lt;WorldStream&gt;_*.xml</c> form.</param>
+    /// <c>&lt;mapName&gt;_Pres.xml</c>, <c>&lt;mapName&gt;_Sim.xml</c>.</param>
     /// <param name="tileOptions">Used for tile size/origin when inferring centers from folder names.</param>
-    /// <param name="outputPath">Full path for the Pres XML file; if null, writes to distRoot. Sim and Tex
-    /// XMLs are always written next to it as <c>&lt;map&gt;_Sim.xml</c> / <c>&lt;map&gt;_Tex.xml</c>.</param>
+    /// <param name="outputPath">Full path for the Pres XML file; if null, writes to distRoot. Sim XML
+    /// is always written next to it as <c>&lt;map&gt;_Sim.xml</c>.</param>
     public static void WriteStreamXml(
         string distRoot,
         string mapName,
@@ -271,10 +253,8 @@ public static class DistPackRunner
             outputPath,
             log);
 
-        // Sim XML — the engine pairs Pres and Sim per-world-stream entry. Stock and DW both ship
-        // _Sim alongside _Pres in `data/stream/`. We don't have a dedicated cSim_* tile prefix in
-        // TileBuildOptions, but the engine accepts a Sim XML that mirrors the Pres tile-center layout
-        // (the simulation stream covers the same world tiles); reuse the cPres centers for both.
+        // Sim XML — the engine pairs Pres and Sim per-world-stream entry. Reuse the cPres centers
+        // (the simulation stream covers the same world tiles).
         string? simOutputPath = outputPath == null
             ? null
             : Path.Combine(
@@ -287,23 +267,6 @@ public static class DistPackRunner
             TileBuildOptions.CPresPrefix,
             "Sim",
             simOutputPath,
-            log);
-
-        // Tex XML always lands next to the Pres XML (same directory). The cTex grid spacing matches
-        // tileOptions.TileSize — cTex tiles are at the half-offset of cPres tiles but use the same
-        // step between adjacent tiles, so the same ±tileSize neighbor logic applies.
-        string? texOutputPath = outputPath == null
-            ? null
-            : Path.Combine(
-                Path.GetDirectoryName(outputPath) ?? distRoot,
-                $"{mapName}_Tex.xml");
-        WriteStreamTilesXml(
-            distRoot,
-            mapName,
-            tileOptions,
-            TileBuildOptions.CTexPrefix,
-            "Tex",
-            texOutputPath,
             log);
     }
 
@@ -347,10 +310,6 @@ public static class DistPackRunner
 
         sb.AppendLine("</StreamTiles>");
 
-        // Default filename pattern: `<mapName>_<xmlLabel>.xml` (no `dist_` prefix). The previous
-        // `dist_<mapName>_<xmlLabel>.xml` shape produced files the engine ignored — stock and DW
-        // ship the bare `<WorldStream>_Pres.xml`/`_Sim.xml`/`_Tex.xml` form in `data/stream/`,
-        // and that is what `cAssetStreamSystem::ParseXmlStreamTile` looks up.
         string path = outputPath ?? Path.Combine(distRoot, $"{mapName}_{xmlLabel}.xml");
         string dir = Path.GetDirectoryName(path)!;
         if (!string.IsNullOrEmpty(dir))
@@ -363,20 +322,10 @@ public static class DistPackRunner
     /// Run the full sequence:
     ///  - if buildFolder != distRoot, copies build output from buildFolder to distRoot first (merge, no overwrite).
     ///  - merge DONOTREMOVE/cpres into cPres_Global
-    ///  - pack all cPres* in one Stream File Tool run, then all cSim*, then all cTex*
+    ///  - pack all cPres* in one Stream File Tool run, then all cSim*
     ///  - write stream XML
-    ///  - optionally delete unpacked cPres*/cSim*/cTex* folders
-    ///  - finally fill in DONOTREMOVE/ctex template files for any &lt;DIST&gt;_Tex.* output that the pack step
-    ///    didn't already produce (does not overwrite the freshly packed cTex output).
+    ///  - optionally delete unpacked cPres*/cSim* folders
     /// </summary>
-    /// <param name="buildFolder">Folder that already contains build output (cPres_*, cSim_*, cTex_*, plus optional *_Global variants). When different from distRoot, output is copied into distRoot first.</param>
-    /// <param name="distRoot">Full path to DIST_MapName (will be created).</param>
-    /// <param name="donotRemoveDir">Path to DONOTREMOVE (contains cpres subfolder and optionally Stream File Tool.exe).</param>
-    /// <param name="streamToolExePath">Full path to Stream File Tool.exe (often DONOTREMOVE\Stream File Tool.exe).</param>
-    /// <param name="mapName">Map name for XML filename.</param>
-    /// <param name="tileOptions">Tile options for XML center logic.</param>
-    /// <param name="deleteUnpackedAfterPack">If true, remove cPres*/cSim* folders after packing.</param>
-    /// <param name="cancellationToken">Optional cancellation; checked before copy and before each pack step.</param>
     public static void Run(
         string buildFolder,
         string distRoot,
@@ -398,14 +347,14 @@ public static class DistPackRunner
 
         cancellationToken.ThrowIfCancellationRequested();
         MergeDonotRemoveIntoCpresGlobal(donotRemoveDir, distRoot, log, tileOptions);
-        RunStreamPack(distRoot, streamToolExePath, log, cancellationToken);      // packs all Pres in one run, then all Sim
+        char platform = tileOptions.TargetPlatform == ArenaPlatform.Xbox360 ? 'x' : 'p';
+        RunStreamPack(distRoot, streamToolExePath, log, platform, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         WriteStreamXml(distRoot, mapName, tileOptions, null, log);
         if (deleteUnpackedAfterPack)
             DeleteUnpackedFolders(distRoot, log);
         cancellationToken.ThrowIfCancellationRequested();
-        // CTEX root files are copied last and never packed.
-        CopyCtexIntoDistRoot(donotRemoveDir, distRoot, log);
+        CopyCtexIntoDistRoot(donotRemoveDir, distRoot, log, tileOptions.TargetPlatform);
         log("[DistPack] Done.");
     }
 
@@ -415,13 +364,12 @@ public static class DistPackRunner
         string folderPrefix)
     {
         var centers = new HashSet<(int, int)>();
-        string prefix = folderPrefix + "_";                          // e.g. "cPres_" / "cTex_"
-        string suffix = "_" + tileOptions.TileSuffix;                // "_high"
-        string folderSuffix = tileOptions.FolderSuffix ?? "";        // e.g. "_proxy"
+        string prefix = folderPrefix + "_";
+        string suffix = "_" + tileOptions.TileSuffix;
+        string folderSuffix = tileOptions.FolderSuffix ?? "";
 
         if (!Directory.Exists(distRoot)) return centers;
 
-        // PSF naming: <prefix>_<cx>_<cy>_high[<folderSuffix>].psf
         foreach (var file in Directory.EnumerateFiles(distRoot, "*.psf"))
         {
             string fileName = Path.GetFileName(file);
@@ -436,8 +384,6 @@ public static class DistPackRunner
             if (!nameForSuffixCheck.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            // Exclude *_Global[._proxy].psf for both cPres (TileBuildOptions.CPresGlobalFolder) and any
-            // hypothetical cTex global. Currently only cPres has a global variant in TileBuildOptions.
             if (string.Equals(folderPrefix, TileBuildOptions.CPresPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 string globalName = TileBuildOptions.CPresGlobalFolder + folderSuffix;
@@ -460,17 +406,15 @@ public static class DistPackRunner
         return centers;
     }
 
-    private static void RunProcess(string exePath, string verb, string folderPath, string type, string workingDir, Action<string> log, CancellationToken cancellationToken = default)
+    private static void RunProcess(string exePath, string verb, string folderPath, string type, string workingDir, Action<string> log, char platform, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        // Example:
-        //   Stream File Tool.exe pack --folder="path\to\DIST" --type=pres --platform=p
         var args = new List<string>
         {
             verb,
             $"--folder=\"{folderPath}\"",
             $"--type={type}",
-            "--platform=p",
+            $"--platform={platform}",
         };
         string argsLine = string.Join(" ", args);
         log($"[DistPack] {Path.GetFileName(exePath)} {argsLine}");
@@ -487,7 +431,7 @@ public static class DistPackRunner
         startInfo.ArgumentList.Add(verb);
         startInfo.ArgumentList.Add($"--folder={folderPath}");
         startInfo.ArgumentList.Add($"--type={type}");
-        startInfo.ArgumentList.Add("--platform=p");
+        startInfo.ArgumentList.Add($"--platform={platform}");
 
         try
         {
@@ -501,9 +445,6 @@ public static class DistPackRunner
             string stderr = "";
             var readOut = Task.Run(() => process.StandardOutput.ReadToEnd());
             var readErr = Task.Run(() => process.StandardError.ReadToEnd());
-            // Large DISTs (10k+ PSGs across hundreds of cPres/cSim/cTex folders) can take many minutes
-            // to pack; 120s was too short and killed the tool after "Done" while the user thought
-            // packing had never started.
             const int packTimeoutMs = 3_600_000; // 60 minutes
             bool exited = process.WaitForExit(packTimeoutMs);
             if (!exited)

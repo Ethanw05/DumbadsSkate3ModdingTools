@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Runtime.InteropServices;
 using ArenaBuilder.Build;
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 using ArenaBuilder.Glb;
 
 namespace ArenaBuilder.WinForms;
@@ -77,6 +78,7 @@ public sealed class MainForm : Form
     private readonly CheckBox _cpresOnlyCheck;
     private readonly CheckBox _csimOnlyCheck;
     private readonly CheckBox _emitNavPowerCheck;
+    private readonly ComboBox _platformCombo;
     private readonly ToolTip _uiToolTip = new();
     private readonly Button _previewButton;
     private readonly Button _worldPainterButton;
@@ -262,10 +264,37 @@ public sealed class MainForm : Form
             BackColor = BackColorMain,
             Padding = new Padding(0, 4, 0, 0)
         };
+        var platformLabel = new Label
+        {
+            Text = "Target:",
+            ForeColor = ForeColorPrimary,
+            BackColor = BackColorMain,
+            Font = FontUi,
+            AutoSize = true,
+            Margin = new Padding(12, 6, 2, 0)
+        };
+        _platformCombo = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            ForeColor = ForeColorPrimary,
+            BackColor = BackColorMain,
+            Font = FontUi,
+            Width = 130,
+            Margin = new Padding(0, 2, 0, 0)
+        };
+        _platformCombo.Items.Add("PS3 (.psg)");
+        _platformCombo.Items.Add("Xbox 360 (.rx2)");
+        _platformCombo.SelectedIndex = 0;
+        _uiToolTip.SetToolTip(_platformCombo,
+            "Console to build for. PS3 emits .psg ('ps3' arena, --platform=p); " +
+            "Xbox 360 emits .rx2 ('xb2' arena, Xenos-tiled textures, --platform=x).");
+
         optionsFlow.Controls.Add(_cpresGlobalOnlyCheck);
         optionsFlow.Controls.Add(_cpresOnlyCheck);
         optionsFlow.Controls.Add(_csimOnlyCheck);
         optionsFlow.Controls.Add(_emitNavPowerCheck);
+        optionsFlow.Controls.Add(platformLabel);
+        optionsFlow.Controls.Add(_platformCombo);
         packPanel.Controls.Add(optionsFlow, 0, 5);
         packPanel.SetColumnSpan(optionsFlow, 2);
 
@@ -318,8 +347,8 @@ public sealed class MainForm : Form
             Multiline = true,
             ReadOnly = true,
             MaxLength = 0,
-            HideSelection = true,
-            ShortcutsEnabled = false,
+            HideSelection = false,
+            ShortcutsEnabled = true,
             AcceptsReturn = true,
             AcceptsTab = false,
             Dock = DockStyle.Fill,
@@ -366,9 +395,26 @@ public sealed class MainForm : Form
             if (_csimOnlyCheck.Checked)
                 _cpresOnlyCheck.Checked = false;
         };
+        // Remember GLB input + DIST/stream output folders across sessions. Load the last-used
+        // paths, then persist whenever either changes (covers Browse… and manual typing).
+        var savedPaths = FolderPathSettings.Load();
+        if (!string.IsNullOrWhiteSpace(savedPaths.GlbFolder))
+            _folderText.Text = savedPaths.GlbFolder;
+        if (!string.IsNullOrWhiteSpace(savedPaths.DistOutputFolder))
+            _distOutputText.Text = savedPaths.DistOutputFolder;
+        _folderText.TextChanged += (_, _) => SaveFolderPaths();
+        _distOutputText.TextChanged += (_, _) => SaveFolderPaths();
+
         SyncEmitNavPowerCheckState();
         RefreshNormalPreviewSettingsLabel();
     }
+
+    private void SaveFolderPaths() =>
+        new FolderPathSettings
+        {
+            GlbFolder = _folderText.Text,
+            DistOutputFolder = _distOutputText.Text,
+        }.Save();
 
     private const int PaddingPx = 16;
 
@@ -446,6 +492,10 @@ public sealed class MainForm : Form
     private void BrowseFolder()
     {
         using var dlg = new FolderBrowserDialog { ShowNewFolderButton = false };
+        // Open at THIS field's last folder, not the dialog's global last-used path (which would be
+        // the Stream folder if that was browsed more recently).
+        if (Directory.Exists(_folderText.Text))
+            dlg.SelectedPath = _folderText.Text;
         if (dlg.ShowDialog(this) == DialogResult.OK)
             _folderText.Text = dlg.SelectedPath;
     }
@@ -453,6 +503,8 @@ public sealed class MainForm : Form
     private void BrowseDistOutput()
     {
         using var dlg = new FolderBrowserDialog { ShowNewFolderButton = true };
+        if (Directory.Exists(_distOutputText.Text))
+            dlg.SelectedPath = _distOutputText.Text;
         if (dlg.ShowDialog(this) == DialogResult.OK)
             _distOutputText.Text = dlg.SelectedPath;
     }
@@ -616,11 +668,14 @@ public sealed class MainForm : Form
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        if (glbs.Length == 0)
+        var bins = Directory.GetFiles(folder, "*.bin", SearchOption.TopDirectoryOnly);
+        if (glbs.Length == 0 && bins.Length == 0)
         {
-            Log("No .glb files found in the selected folder.");
+            Log("No .glb or .bin files found in the selected folder.");
             return;
         }
+        if (glbs.Length == 0)
+            Log($"No .glb files, but found {bins.Length} .bin file(s) -- running AIPath-only pass.");
 
         const float meshScale = 1f;
         var options = GetTileBuildOptions();
@@ -633,11 +688,17 @@ public sealed class MainForm : Form
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        if (glbs.Length == 0)
+        // .bin files (AIPNODE3 recordings) are processed by TileBuildPipeline
+        // alongside the GLB pass. Allow the build to proceed when only .bin
+        // files are present so an AIPath-only re-build doesn't short-circuit.
+        var bins = Directory.GetFiles(inputFolder, "*.bin", SearchOption.TopDirectoryOnly);
+        if (glbs.Length == 0 && bins.Length == 0)
         {
-            log("No .glb files found in the selected folder.");
+            log("No .glb or .bin files found in the selected folder.");
             return;
         }
+        if (glbs.Length == 0)
+            log($"No .glb files, but found {bins.Length} .bin file(s) -- running AIPath-only pass.");
 
         Directory.CreateDirectory(distRoot);
 
@@ -654,6 +715,7 @@ public sealed class MainForm : Form
             CPresOnly = _cpresOnlyCheck.Checked,
             CSimOnly = _csimOnlyCheck.Checked,
             EmitNavPower = _emitNavPowerCheck.Checked && !_cpresOnlyCheck.Checked,
+            TargetPlatform = _platformCombo.SelectedIndex == 1 ? ArenaPlatform.Xbox360 : ArenaPlatform.Ps3,
             NormalSynthStrength = normalSynth.Strength,
             NormalSynthLevel = normalSynth.Level,
             NormalSynthBlurSharp = normalSynth.BlurSharp

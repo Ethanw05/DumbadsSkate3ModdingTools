@@ -55,7 +55,7 @@ public static class NavPowerNativeTocBuilder
         BinaryPrimitives.WriteUInt32BigEndian(s.Slice(entryOff + 0, 4), 0);
         BinaryPrimitives.WriteUInt32BigEndian(s.Slice(entryOff + 4, 4), NavPowerTocEntryMarker);
         BinaryPrimitives.WriteUInt64BigEndian(s.Slice(entryOff + 8, 8), tocAssetGuid);
-        BinaryPrimitives.WriteUInt32BigEndian(s.Slice(entryOff + 16, 4), ArenaBuilder.Core.Platforms.PS3.RwTypeIds.NavPowerData);
+        BinaryPrimitives.WriteUInt32BigEndian(s.Slice(entryOff + 16, 4), ArenaBuilder.Core.Platforms.Common.RwTypeIds.NavPowerData);
         BinaryPrimitives.WriteUInt32BigEndian(s.Slice(entryOff + 20, 4), navPowerDictionaryIndex);
 
         int tmOff = (int)namesAndTypeMapRel;

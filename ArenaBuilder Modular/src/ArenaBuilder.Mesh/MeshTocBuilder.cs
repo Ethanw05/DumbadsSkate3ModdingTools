@@ -1,4 +1,4 @@
-using ArenaBuilder.Core.Platforms.PS3;
+using ArenaBuilder.Core.Platforms.Common;
 using ArenaBuilder.Core.Psg;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
@@ -15,7 +15,7 @@ public static class MeshTocBuilder
 {
     // Canonical mesh TOC type order observed in real PSGs.
     // Types not present in this file map to m_uiItemsCount.
-    private static readonly uint[] CanonicalMeshTocTypes = Ps3RenderWareConstants.CanonicalMeshTocTypes;
+    private static readonly uint[] CanonicalMeshTocTypes = PegasusRwConstants.CanonicalMeshTocTypes;
 
     /// <summary>
     /// Builds TOC spec for mesh. materialGuids ordered by material index; instanceGuid for instance.

@@ -9,7 +9,10 @@ namespace ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
 /// - Elements at offset 0x10, 8 bytes each: [0]=vertex_type, [1]=num_components, [2]=stream, [3]=offset,
 ///   [4:6]=stride(be), [6]=element_type, [7]=class_id.
 /// - Real meshes use 4 elements (Position, TEX0, TEX1, Tangent) or 3 elements (no Tangent).
-/// - 4-element: 56 bytes, stride 28; 3-element: 48 bytes, stride 24. Both end with 8-byte terminator.
+/// - 4-element: 56 bytes, stride 28 (Position 12 + TEX0 float2 8 + TEX1 4 + Tangent 4).
+/// - TEX0 is FLOAT32 (not half2) to keep UVs accurate at large magnitudes (world-aligned terrain
+///   routinely hits |UV| in the hundreds; half mantissa = 10 bits → precision ~UV/2048, half2 warps).
+/// Both end with 8-byte terminator.
 /// </summary>
 public static class VertexDescriptorBuilder
 {
@@ -26,12 +29,19 @@ public static class VertexDescriptorBuilder
     public const byte VT_DEC3N = 0x06;
 
     /// <summary>
-    /// Builds the real mesh static VertexDescriptor (stride 28):
-    /// Position(0), TEX0(12), TEX1(16), Tangent(24), +4 bytes reserved at 20..23.
+    /// Builds the static-mesh VertexDescriptor (stride 32):
+    /// Position(0), TEX0 float2(12), TEX1/lm_norm int16x4(20), Tangent dec3n(28). TEX0 = FLOAT32
+    /// (was half2) — half precision warps UVs whose magnitude exceeds a few units, which kills
+    /// world-aligned terrain. Stride is 32 (not 28) so the full int16x4 TEX1 slot fits alongside
+    /// the float2 TEX0; that TEX1 slot carries the lightmap UV + packed vertex normal ("lm_norm"),
+    /// the only per-vertex normal the static-environment shader has — see
+    /// <see cref="ArenaBuilder.Mesh.MeshVertexPacker"/> remarks.
+    /// Engine reads stride and per-element offsets from this descriptor.
+    /// Matches <see cref="ArenaBuilder.Mesh.MeshVertexPacker.PackVertex"/>.
     /// </summary>
     public static byte[] BuildStaticMeshLayout()
     {
-        const int stride = 28;
+        const int stride = 32;
         var buf = new List<byte>(56);
 
         // Header bytes per real mesh PSGs. Real 4-element meshes use 0x4301 at 0x06; 3-element use 0x0301.
@@ -46,11 +56,12 @@ public static class VertexDescriptorBuilder
 
         // 8-byte elements per blender_psg_material_importer: elem_data[0..7]
         AddElement(buf, VT_FLOAT32, 3, 0, 0, stride, ElemXYZ, 1);      // Position
-        AddElement(buf, VT_FLOAT16, 2, 0, 12, stride, ElemTEX0, 1);    // TEX0 (half2)
-        // Real mesh PSGs store TEX1 metadata as 0x01 0x04 ... 0x09 0x01.
-        // glbtopsg/PsgMeshnBones treat this as TEX1 (UV1) data, not NORMAL.
-        AddElement(buf, VT_INT16, 4, 0, 16, stride, ElemTEX1, 1);      // TEX1 (int16 pair in 4-byte slot)
-        AddElement(buf, VT_DEC3N, 1, 0, 24, stride, ElemTANGENT, 1);   // Tangent
+        AddElement(buf, VT_FLOAT32, 2, 0, 12, stride, ElemTEX0, 1);    // TEX0 (float2 — full precision)
+        // Real mesh PSGs store TEX1 as int16x4 (0x01 0x04 ... 0x09 0x01). It is NOT plain UV1: the
+        // static-environment shader reads it as "lm_norm" = lightmap UV (magnitudes) + packed vertex
+        // normal (components 2,3 + sign bits). Verified against stock cPres meshes. See MeshVertexPacker.
+        AddElement(buf, VT_INT16, 4, 0, 20, stride, ElemTEX1, 1);      // TEX1/lm_norm (int16x4, 8 bytes)
+        AddElement(buf, VT_DEC3N, 1, 0, 28, stride, ElemTANGENT, 1);   // Tangent
 
         // Real meshes include an 8-byte terminator.
         buf.Add(0xFF);

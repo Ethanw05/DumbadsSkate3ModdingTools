@@ -1,9 +1,10 @@
 using ArenaBuilder.Collision.ClusteredMesh;
 using ArenaBuilder.Collision.Compression;
 using ArenaBuilder.Collision.Serialization;
+using ArenaBuilder.Core.Platforms.Common;
 using ArenaBuilder.Core.Platforms.PS3;
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Collision;
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Collision;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh;
 using ArenaBuilder.Core.Psg;
 using System.Numerics;
 using System.Security.Cryptography;

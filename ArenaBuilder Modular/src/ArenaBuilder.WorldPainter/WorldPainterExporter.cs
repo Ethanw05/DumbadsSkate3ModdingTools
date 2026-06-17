@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.WorldPainter;
 using ArenaBuilder.Core.Platforms.PS3.Pegasus.WorldPainter;
 using ArenaBuilder.Glb;
 

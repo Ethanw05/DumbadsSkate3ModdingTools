@@ -9,16 +9,21 @@ namespace ArenaBuilder.NavPower;
 /// (Areas + Edges stream) matching retail Skate 3 DIST_University field values.
 /// </summary>
 /// <remarks>
-/// Bit-layout references (bfxAreas.h):
+/// Bit-layout references (bfxAreas.h, corrected by Sk3 EBOOT RE — see below):
 /// <list type="bullet">
 ///   <item>Area flags1 – NUM_EDGES[0-6], ISLAND[7-23] = 0x1FFFF (retail null sentinel).</item>
-///   <item>Area flags2 – LAYER_INDEX[11-15]=2, OB_COST_MULT[16-19]=1, STATIC_COST_MULT[20-23]=1, BASIS_VERT[24-30].</item>
-///   <item>Area flags3 – GRAPH_INDEX=512 in bits[16–29] (retail pattern; SEARCH_INDEX=0).</item>
+///   <item>Area flags2 – USAGE_COUNT[0-9]=256, LAYER_INDEX[11-15]=2. (NOT basis_vert — see flags3.)</item>
+///   <item>Area flags3 – BASIS_VERT[24-30] = polygon's basis vertex index (NOT graph_index in v23).
+///     EBOOT <c>sub_9B9F88 @ 0x9B9F88</c> reads <c>(flags3 &gt;&gt; 24) &amp; 0x7F</c> and uses it as
+///     an edge index for surface-normal calculation. Modern (v26+) NavPower SDK puts BASIS_VERT in
+///     flags2[24-30] and GRAPH_INDEX in flags3[16-29]; Sk3 v23 puts BASIS_VERT in flags3 instead.</item>
 ///   <item>Edge flags1 – EDGE_TYPE[15-16]=2 (NORMAL_ADJ_SMALL_HOLE), IS_FORCED_ISLAND_EDGE[17]=1.</item>
 ///   <item>Edge flags2 – 0 (retail uses no edge costs; BFS pathfinding).</item>
 /// </list>
-/// Retail pattern observed across all 105 valid DIST_University NavGraphs:
-/// island=65535, dist=0, all edges NORMAL_ADJ_SMALL_HOLE|FORCED_ISLAND, layer_index=2.
+/// Verified against DIST_Industrial stock NavPower: 517 areas with basis_vert ∈ {2..8} (one per polygon
+/// shape). Hardcoding basis_vert=2 for all areas (the bug fixed here) produced wrong surface normals on
+/// every 4+-edge polygon, which made pedestrian spawn probes shoot in random directions, every probe
+/// rejected, and BFX planner expansion nodes leaked until the dedicated heap crashed (~10 min play).
 /// </remarks>
 internal static class RecastToNavPowerSerializer
 {
@@ -44,8 +49,9 @@ internal static class RecastToNavPowerSerializer
         InvalidDedgeIndex | (EdgeTypeNormalAdjSmallHole << EdgeTypeShift) | IsForcedIslandEdge;
 
     // ── Area flags2 ──────────────────────────────────────────────────────────
-    // Retail DIST_University: ob_cost_mult=0 and static_cost_mult=0 in the multiplier nibbles,
-    // usage_count=256 (0x100) in low 10 bits, layer_index in bits[11-15].
+    // Retail DIST_Industrial / DIST_University: ob_cost_mult=0 and static_cost_mult=0 in the multiplier
+    // nibbles, usage_count=256 (0x100) in low 10 bits, layer_index in bits[11-15]. BASIS_VERT is NOT
+    // in flags2 in Sk3 v23 (see flags3 below).
     private const uint RetailAreaUsageCount = 0x100u;      // AREA_USAGE_COUNT low 10 bits = 256
     private const uint LayerIndex2 = 2u << 11;             // LAYER_INDEX_SHIFT = 11 (retail=2)
 
@@ -221,10 +227,11 @@ internal static class RecastToNavPowerSerializer
             areasW.WriteUInt32(0);
             uint flags1 = ((uint)edgeCount & 0x7Fu) | ((RetailIsland << IslandShift) & 0x00FFFF80u);
             areasW.WriteUInt32(flags1);
-            uint flags2 = RetailAreaUsageCount | LayerIndex2
-                | (((uint)basisVerts[ni] << 24) & 0x7F000000u);
+            uint flags2 = RetailAreaUsageCount | LayerIndex2;
             areasW.WriteUInt32(flags2);
-            areasW.WriteUInt32(NavPowerBinaryConstants.RetailAreaFlags3GraphIndex);
+            uint flags3 = ((uint)basisVerts[ni] << NavPowerBinaryConstants.Flags3BasisVertShift)
+                & NavPowerBinaryConstants.Flags3BasisVertMask;
+            areasW.WriteUInt32(flags3);
 
             for (int j = 0; j < edgeCount; j++)
             {

@@ -34,10 +34,15 @@ internal static class NavPowerBinaryConstants
     internal const int KdTreeDataPrefixBytes = 28;
 
     /// <summary>
-    /// Retail Skate 3 areas store a non-zero <c>GRAPH_INDEX</c> in flags3 (bits 16–29), commonly 512 or 768.
-    /// Some loaders may consult on-disk flags before NavGraph fully patches runtime state; keep parity with retail.
+    /// Skate 3 v23 NavPower repurposes flags3 upper bits as BASIS_VERT (bits 24–30), NOT GRAPH_INDEX as
+    /// in modern (v26+) NavPower SDK headers. EBOOT path-planner (<c>sub_9B9F88 @ 0x9B9F88</c>) reads
+    /// <c>(flags3 &gt;&gt; 24) &amp; 0x7F</c> as an edge index for surface-normal calculation. Stock
+    /// DIST_Industrial varies basis 2–8 per polygon; hardcoding 512 (basis=2) only works for triangles
+    /// and produces a flipped surface normal on every quad/poly, which makes pedestrian spawn probes
+    /// shoot the wrong direction and rejected spawns leak BFX planner expansion nodes.
     /// </summary>
-    internal const uint RetailAreaFlags3GraphIndex = 512u << 16;
+    internal const int Flags3BasisVertShift = 24;
+    internal const uint Flags3BasisVertMask = 0x7F000000u;
 
     internal static uint PointerSize32 => 0u;
 }

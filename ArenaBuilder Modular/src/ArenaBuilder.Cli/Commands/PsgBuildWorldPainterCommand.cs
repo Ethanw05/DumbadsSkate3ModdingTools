@@ -1,5 +1,7 @@
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.WorldPainter;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.WorldPainter;
 using System.Globalization;
+
+using ArenaBuilder.Core.Platforms.PS3.Pegasus.WorldPainter;
 
 namespace ArenaBuilder.Cli.Commands;
 

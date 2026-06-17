@@ -1,4 +1,4 @@
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh;
 using ArenaBuilder.Glb;
 using SharpGLTF.Schema2;
 using System.Numerics;

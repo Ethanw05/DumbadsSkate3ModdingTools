@@ -1,16 +1,34 @@
 using System.Buffers.Binary;
 using System.Numerics;
 
+using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+
 namespace ArenaBuilder.Mesh;
 
 /// <summary>
 /// Packs vertex data from float arrays to PSG format.
-/// Real mesh layout (stride 28): Position (float3), TEX0 (half2), TEX1 (int16x2), 4-byte reserved gap, Tangent (dec3n).
-/// Stride = 28 bytes.
+/// Layout (stride 32): Position (float3) @0, TEX0 (float2) @12, TEX1/lm_norm (int16x4) @20, Tangent (dec3n) @28.
+/// TEX0 uses FLOAT32 instead of half2 — half mantissa is 10 bits, so a UV value of 100 has
+/// precision ~0.05 (visible warping). World-aligned terrain UVs routinely hit hundreds. FLOAT32
+/// keeps UVs accurate across the whole map.
+///
+/// The TEX1 (int16x4) slot is NOT a plain UV1 — it is Skate's combined lightmap-UV + vertex-normal
+/// pack ("lm_norm"), the only per-vertex normal the static-environment shader has (there is no
+/// dedicated NORMAL element in stock static meshes). The static-environment VS decodes it as:
+///   vNormal.xy = lm_norm.zw;                          // components [2],[3] = normal.x, normal.y
+///   signs      = sign(lm_norm.xy);                    // sign of [0],[1]
+///   vNormal.z  = signs.y * sqrt(1 - dot(vNormal.xy)); // [1] sign carries normal.z sign
+///   vNormal   *= signs.x;                             // [0] sign carries overall flip
+///   lightmapUV = abs(lm_norm.xy);                     // |[0]|,|[1]| = lightmap U,V
+/// Verified against stock cPres meshes (decoded normal == geometric face normal, |dot| ≈ 0.999;
+/// components [2],[3] never leave the unit circle). Writing only the UV ints and zeroing [2],[3]
+/// makes the engine reconstruct a garbage normal → scattered/faceted lighting.
+/// Matching descriptor lives in
+/// <see cref="ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh.VertexDescriptorBuilder.BuildStaticMeshLayout"/>.
 /// </summary>
 public static class MeshVertexPacker
 {
-    public const int Stride = 28;
+    public const int Stride = 32;
 
     /// <summary>
     /// Packs a single vertex. Positions can be scaled (e.g. 256.0 for game units).
@@ -19,7 +37,8 @@ public static class MeshVertexPacker
         Span<byte> output,
         in Vector3 position,
         in Vector2 uv0,
-        in Vector2 uv1,
+        in Vector2 lightmapUv,
+        in Vector3 normal,
         in Vector3 tangent,
         float scale = 1f)
     {
@@ -31,21 +50,15 @@ public static class MeshVertexPacker
         BinaryPrimitives.WriteSingleBigEndian(output.Slice(off, 4), position.Z * scale);
         off += 4;
 
-        // TEX0 format 0x03 = half2.
-        BinaryPrimitives.WriteHalfBigEndian(output.Slice(off, 2), (Half)uv0.X);
-        off += 2;
-        BinaryPrimitives.WriteHalfBigEndian(output.Slice(off, 2), (Half)uv0.Y);
-        off += 2;
-
-        // TEX1 format 0x01 in real meshes: signed normalized int16 pair.
-        BinaryPrimitives.WriteInt16BigEndian(output.Slice(off, 2), ToSnorm16(uv1.X));
-        off += 2;
-        BinaryPrimitives.WriteInt16BigEndian(output.Slice(off, 2), ToSnorm16(uv1.Y));
-        off += 2;
-
-        // Reserved gap present in real layout (offset 20..23).
-        output.Slice(off, 4).Clear();
+        // TEX0 format 0x02 = float2. Half2 lost precision on large UVs (world-aligned terrain).
+        BinaryPrimitives.WriteSingleBigEndian(output.Slice(off, 4), uv0.X);
         off += 4;
+        BinaryPrimitives.WriteSingleBigEndian(output.Slice(off, 4), uv0.Y);
+        off += 4;
+
+        // TEX1 (int16x4) = lm_norm: lightmap UV magnitude + packed vertex normal. See class remarks.
+        PackLmNorm(output.Slice(off, 8), lightmapUv, normal);
+        off += 8;
 
         BinaryPrimitives.WriteUInt32BigEndian(output.Slice(off, 4), PackDec3n(tangent));
     }
@@ -69,9 +82,10 @@ public static class MeshVertexPacker
         float scale = 1f,
         IReadOnlyList<Vector2>? uvs1 = null)
     {
-        ReadOnlySpan<Vector3> posSpan = AsSpan(positions);
-        ReadOnlySpan<Vector2> uvSpan  = AsSpan(uvs);
-        ReadOnlySpan<Vector2> uv1Span = uvs1 != null ? AsSpan(uvs1) : default;
+        ReadOnlySpan<Vector3> posSpan  = AsSpan(positions);
+        ReadOnlySpan<Vector3> normSpan = AsSpan(normals);
+        ReadOnlySpan<Vector2> uvSpan   = AsSpan(uvs);
+        ReadOnlySpan<Vector2> uv1Span  = uvs1 != null ? AsSpan(uvs1) : default;
 
         var tangents = ComputeTangents(positions, normals, uvs, indices);
 
@@ -80,7 +94,10 @@ public static class MeshVertexPacker
         Span<byte> outSpan = outBuf;
         for (int i = 0; i < count; i++)
         {
-            Vector2 tex1 = (!uv1Span.IsEmpty && i < uv1Span.Length) ? uv1Span[i] : uvSpan[i];
+            // TEX1 carries the lightmap UV (UV1 channel). When no UV1 was authored, fall back to UV0
+            // so the magnitudes stay in a sane range; the sign bits/normal channels are filled below.
+            Vector2 lightmapUv = (!uv1Span.IsEmpty && i < uv1Span.Length) ? uv1Span[i] : uvSpan[i];
+            Vector3 normal = i < normSpan.Length ? normSpan[i] : Vector3.UnitY;
             // Never pack a zero tangent: engine can shade black (e.g. N·L with zero).
             var tangent = tangents[i];
             if (tangent.LengthSquared() < 1e-12f)
@@ -89,7 +106,8 @@ public static class MeshVertexPacker
                 outSpan.Slice(i * Stride, Stride),
                 posSpan[i],
                 uvSpan[i],
-                tex1,
+                lightmapUv,
+                normal,
                 tangent,
                 scale);
         }
@@ -114,10 +132,35 @@ public static class MeshVertexPacker
         return copy;
     }
 
-    private static short ToSnorm16(float v)
+    /// <summary>
+    /// Packs the lightmap UV + vertex normal into the 8-byte TEX1 "lm_norm" slot (4× signed int16, BE).
+    /// Inverse of the static-environment VS decode (see class remarks):
+    ///   [0] = +|U|·32767            (sign always + → decoded signs.x = +1, no overall flip)
+    ///   [1] = sign(Nz)·|V|·32767    (sign carries normal.z's sign)
+    ///   [2] = Nx·32767, [3] = Ny·32767   (normal.z reconstructed as signs.y·sqrt(1-Nx²-Ny²))
+    /// </summary>
+    private static void PackLmNorm(Span<byte> dst, Vector2 lightmapUv, Vector3 normal)
     {
-        float clamped = Math.Clamp(v, -1f, 1f);
-        return (short)MathF.Round(clamped * 32767f);
+        float nx = normal.X, ny = normal.Y, nz = normal.Z;
+        float len = MathF.Sqrt(nx * nx + ny * ny + nz * nz);
+        if (len > 1e-8f) { nx /= len; ny /= len; nz /= len; }
+        else { nx = 0f; ny = 1f; nz = 0f; }
+
+        // Lightmap UV magnitudes. Clamp to [0,1]; the sign bits are reserved for the normal.
+        float lu = Math.Clamp(lightmapUv.X, 0f, 1f);
+        float lv = Math.Clamp(lightmapUv.Y, 0f, 1f);
+
+        short i0 = (short)MathF.Round(lu * 32767f);          // always ≥ 0 (signs.x = +1)
+        short i1mag = (short)MathF.Round(lv * 32767f);
+        // sign of [1] carries sign(Nz). Preserve it even when |V| rounds to 0.
+        short i1 = nz < 0f ? (short)(i1mag == 0 ? -1 : -i1mag) : i1mag;
+        short i2 = (short)MathF.Round(Math.Clamp(nx, -1f, 1f) * 32767f);
+        short i3 = (short)MathF.Round(Math.Clamp(ny, -1f, 1f) * 32767f);
+
+        BinaryPrimitives.WriteInt16BigEndian(dst.Slice(0, 2), i0);
+        BinaryPrimitives.WriteInt16BigEndian(dst.Slice(2, 2), i1);
+        BinaryPrimitives.WriteInt16BigEndian(dst.Slice(4, 2), i2);
+        BinaryPrimitives.WriteInt16BigEndian(dst.Slice(6, 2), i3);
     }
 
     /// <summary>Packs a normal/tangent as dec3n (11+11+10 bits). Matches glbtopsg: round then mask.</summary>

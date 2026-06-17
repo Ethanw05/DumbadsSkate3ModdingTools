@@ -3,6 +3,8 @@ using ArenaBuilder.Texture.Dds;
 using System.Collections.Concurrent;
 using System.IO.Hashing;
 
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
+
 namespace ArenaBuilder.Texture;
 
 /// <summary>
@@ -27,13 +29,39 @@ public sealed class TextureDeduplicationRegistry
     /// </summary>
     private readonly ConcurrentDictionary<string, Lazy<DdsTextureInput>> _encodedSourceCache = new(StringComparer.Ordinal);
     private readonly Action<string>? _log;
+    private readonly ArenaPlatform _platform;
     private int _nextIndex;
     private long _encodeCacheHits;
     private long _encodeCacheMisses;
 
-    public TextureDeduplicationRegistry(Action<string>? log = null)
+    public TextureDeduplicationRegistry(Action<string>? log = null, ArenaPlatform platform = ArenaPlatform.Ps3)
     {
         _log = log;
+        _platform = platform;
+    }
+
+    /// <summary>Target platform for emitted texture arenas (PS3 .psg / Xbox 360 .rx2).</summary>
+    public ArenaPlatform Platform => _platform;
+
+    /// <summary>File extension for the target platform.</summary>
+    public string PsgExtension => _platform == ArenaPlatform.Xbox360 ? ".rx2" : ".psg";
+
+    /// <summary>
+    /// Composes the texture arena for the target platform (X360 re-tiles into Xenos layout via
+    /// <see cref="TextureRX2Composer"/>; PS3 uses <see cref="TexturePsgComposer"/>) and writes it,
+    /// serialized per output path.
+    /// </summary>
+    private void ComposeAndWritePsg(DdsTextureInput ddsInput, ulong guid, string psgPath)
+    {
+        PsgArenaSpec spec = _platform == ArenaPlatform.Xbox360
+            ? TextureRX2Composer.Compose(ddsInput, guid)
+            : TexturePsgComposer.Compose(ddsInput, guid);
+        object pathLock = _pathLocks.GetOrAdd(psgPath, _ => new object());
+        lock (pathLock)
+        {
+            using var fs = File.Create(psgPath);
+            GeneralArenaBuilder.Write(spec, fs, _platform);
+        }
     }
 
     /// <summary>Number of encode cache hits — i.e. BCn encodes skipped because a matching source had already been encoded in this build.</summary>
@@ -157,23 +185,10 @@ public sealed class TextureDeduplicationRegistry
     public long LogicalWritesSkipped => Interlocked.Read(ref _logicalWritesSkippedExists);
 
     /// <summary>
-    /// Logical-GUID write path used for the dual-tier (cPres-small + cTex-full) texture scheme.
+    /// Logical-GUID write path. The caller passes a pre-computed <paramref name="logicalGuid"/>
+    /// (full-variant, bit 62 clear). Idempotent per (path) within a build: re-emitting the same
+    /// GUID into the same directory is a no-op after the first write.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Bypasses the payload-hash dedup map. The caller passes a pre-computed
-    /// <paramref name="logicalGuid"/>: either the FULL-variant GUID <c>G</c>
-    /// (bit 62 clear, used in cTex tiles and GlobalOnly) or the SMALL-variant GUID
-    /// <c>G | 0x4000_0000_0000_0000</c> (bit 62 set, used in cPres tiles for the fallback copy).
-    /// Mesh material channels always reference <c>G</c>; the engine retries with bit 62 set on a
-    /// primary lookup miss to resolve the cPres-side fallback.
-    /// </para>
-    /// <para>
-    /// Idempotent per (path) within a build: re-emitting the same GUID into the same directory
-    /// is a no-op after the first write, so multiple meshes in the same cPres tile that reference
-    /// the same texture only write the PSG once.
-    /// </para>
-    /// </remarks>
     public GlbTextureAutoBuilder.BuiltTexturePsg WriteLogicalGuidPsg(
         DdsTextureInput ddsInput,
         ulong logicalGuid,
@@ -182,7 +197,7 @@ public sealed class TextureDeduplicationRegistry
         string outputDirectory)
     {
         Interlocked.Increment(ref _logicalWritesAttempted);
-        string psgPath = Path.Combine(outputDirectory, $"{logicalGuid:X16}.psg");
+        string psgPath = Path.Combine(outputDirectory, $"{logicalGuid:X16}{PsgExtension}");
 
         // Track first-writer per path to avoid redundant compose+write when the same logical GUID
         // is requested multiple times for the same directory (multiple meshes referencing the same
@@ -199,13 +214,7 @@ public sealed class TextureDeduplicationRegistry
                 psgPath);
         }
 
-        var spec = TexturePsgComposer.Compose(ddsInput, logicalGuid);
-        object pathLock = _pathLocks.GetOrAdd(psgPath, _ => new object());
-        lock (pathLock)
-        {
-            using var fs = File.Create(psgPath);
-            GenericArenaWriter.Write(spec, fs);
-        }
+        ComposeAndWritePsg(ddsInput, logicalGuid, psgPath);
 
         return new GlbTextureAutoBuilder.BuiltTexturePsg(
             channelName,
@@ -248,7 +257,7 @@ public sealed class TextureDeduplicationRegistry
         {
             _log?.Invoke($"[TextureDeduper] Duplicate texture detected. Source: {sourceImageName}. Reusing texture index {existing.Index} (GUID 0x{existing.Guid:X16}).");
             string resultPath = existing.PsgPath;
-            string targetPath = Path.Combine(outputDirectory, $"{existing.Guid:X16}.psg");
+            string targetPath = Path.Combine(outputDirectory, $"{existing.Guid:X16}{PsgExtension}");
             string existingDir = Path.GetFullPath(Path.GetDirectoryName(resultPath) ?? "");
             string targetDir = Path.GetFullPath(outputDirectory);
             if (!string.Equals(existingDir, targetDir, StringComparison.OrdinalIgnoreCase) && File.Exists(resultPath))
@@ -267,7 +276,7 @@ public sealed class TextureDeduplicationRegistry
         }
 
         ulong guid = TextureGuidStrategy.KeyToGuid(key);
-        string psgPath = Path.Combine(outputDirectory, $"{guid:X16}.psg");
+        string psgPath = Path.Combine(outputDirectory, $"{guid:X16}{PsgExtension}");
 
         var globalTex = new GlobalTexture
         {
@@ -287,7 +296,7 @@ public sealed class TextureDeduplicationRegistry
             var raced = _texturesByKey[key];
             _log?.Invoke($"[TextureDeduper] Duplicate texture detected (race). Source: {sourceImageName}. Reusing texture index {raced.Index} (GUID 0x{raced.Guid:X16}).");
             string resultPath = raced.PsgPath;
-            string targetPath = Path.Combine(outputDirectory, $"{raced.Guid:X16}.psg");
+            string targetPath = Path.Combine(outputDirectory, $"{raced.Guid:X16}{PsgExtension}");
             string existingDir = Path.GetFullPath(Path.GetDirectoryName(resultPath) ?? "");
             string targetDir = Path.GetFullPath(outputDirectory);
             if (!string.Equals(existingDir, targetDir, StringComparison.OrdinalIgnoreCase) && File.Exists(resultPath))
@@ -310,13 +319,7 @@ public sealed class TextureDeduplicationRegistry
             _globalTextures.Add(globalTex);
         }
 
-        var spec = TexturePsgComposer.Compose(ddsInput, guid);
-        object pathLock = _pathLocks.GetOrAdd(psgPath, _ => new object());
-        lock (pathLock)
-        {
-            using var fs = File.Create(psgPath);
-            GenericArenaWriter.Write(spec, fs);
-        }
+        ComposeAndWritePsg(ddsInput, guid, psgPath);
 
         return new GlbTextureAutoBuilder.BuiltTexturePsg(
             channelName,

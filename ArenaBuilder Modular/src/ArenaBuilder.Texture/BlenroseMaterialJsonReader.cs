@@ -1,4 +1,4 @@
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh;
 using System.Text.Json;
 
 namespace ArenaBuilder.Texture;
@@ -27,7 +27,11 @@ internal static class BlenroseMaterialJsonReader
         IReadOnlyDictionary<string, string?> ChannelImagePaths,
         IReadOnlyDictionary<string, string?> ChannelImageNames,
         IReadOnlyDictionary<string, float> Scalars,
-        IReadOnlyDictionary<string, bool> ChannelAlphaFlags);
+        IReadOnlyDictionary<string, bool> ChannelAlphaFlags,
+        // Principled BSDF Roughness slider value (0..1) from BlenRose, used to drive
+        // autogen specular intensity when no specular texture is supplied. Null when
+        // the material JSON predates roughness export.
+        float? Roughness);
 
     public static IReadOnlyDictionary<string, MaterialTextureConfig> Read(string jsonPath)
     {
@@ -120,7 +124,17 @@ internal static class BlenroseMaterialJsonReader
                 channelAlphaFlags["diffuse"] = diffuseAlphaEl.GetBoolean();
             }
 
-            var config = new MaterialTextureConfig(materialName, sourceJsonPath, channelImagePaths, channelImageNames, scalars, channelAlphaFlags);
+            // Optional top-level roughness (Principled BSDF Roughness slider). Drives
+            // autogen specular strength; absent in older JSON (treated as null).
+            float? roughness = null;
+            if (materialProp.Value.TryGetProperty("roughness", out var roughnessEl) &&
+                roughnessEl.ValueKind == JsonValueKind.Number &&
+                roughnessEl.TryGetSingle(out float roughnessVal))
+            {
+                roughness = roughnessVal;
+            }
+
+            var config = new MaterialTextureConfig(materialName, sourceJsonPath, channelImagePaths, channelImageNames, scalars, channelAlphaFlags, roughness);
             byName[materialProp.Name] = config;
             byName[materialName] = config;
         }
@@ -154,6 +168,9 @@ internal static class BlenroseMaterialJsonReader
         ["macro_overlay_opacity"] = "macroOverlayOpacity",
         ["macro_overlay_uv_scale"] = "macroOverlayUVScale",
         ["embedded_decal"] = "embeddedDecal",
+        // UV-scroll speed (incandescent.backlituvscroll). Engine scrolls UV by speed*g_fAnimationTime.
+        ["u_animation_speed"] = "uAnimationSpeed",
+        ["v_animation_speed"] = "vAnimationSpeed",
     };
 
     /// <summary>
@@ -164,7 +181,7 @@ internal static class BlenroseMaterialJsonReader
     /// <summary>
     /// Canonical order for scalar channels.
     /// </summary>
-    private static readonly string[] ScalarChannelOrder = ["detailNormalUVScale", "macroOverlayOpacity", "macroOverlayUVScale", "embeddedDecal"];
+    private static readonly string[] ScalarChannelOrder = ["detailNormalUVScale", "macroOverlayOpacity", "macroOverlayUVScale", "embeddedDecal", "uAnimationSpeed", "vAnimationSpeed"];
 
     /// <summary>
     /// Converts MaterialTextureConfig to BlenroseChannelConfig for RenderMaterialDataBuilder.

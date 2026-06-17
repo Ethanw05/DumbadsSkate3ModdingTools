@@ -1,9 +1,11 @@
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh;
 using ArenaBuilder.Core.Psg;
 using ArenaBuilder.Texture.Dds;
 using SharpGLTF.Memory;
 using SharpGLTF.Schema2;
 using System.Collections.Concurrent;
+
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 
 namespace ArenaBuilder.Texture;
 
@@ -173,10 +175,27 @@ public static class GlbTextureAutoBuilder
             throw new ArgumentException("GLB path is required.", nameof(glbPath));
         if (!File.Exists(glbPath))
             throw new FileNotFoundException("GLB file not found.", glbPath);
-
-        var warnings = new List<string>();
-
         var model = ModelRoot.Load(glbPath);
+        return ResolveSourcesFromModel(model, glbPath, generateMipMaps, materialsJsonPath,
+            materialNameOverride, guidNamespace, normalSynthSettings, cancellationToken);
+    }
+
+    /// <summary>
+    /// Same as <see cref="ResolveSourcesFromGlb"/> but reuses a preloaded <see cref="ModelRoot"/>.
+    /// Callers (e.g. <c>GlbBuildSource</c>) can resolve N materials in one big GLB without
+    /// re-reading the file N times.
+    /// </summary>
+    public static ResolvedGlbTextureSources ResolveSourcesFromModel(
+        ModelRoot model,
+        string glbPath,
+        bool generateMipMaps = true,
+        string? materialsJsonPath = null,
+        string? materialNameOverride = null,
+        string? guidNamespace = null,
+        DerivedTextureGenerator.NormalSynthSettings? normalSynthSettings = null,
+        CancellationToken cancellationToken = default)
+    {
+        var warnings = new List<string>();
         string glbStem = Path.GetFileNameWithoutExtension(glbPath);
         string glbIdentity = BuildScopedGlbIdentity(glbPath, glbStem, guidNamespace);
 
@@ -311,7 +330,10 @@ public static class GlbTextureAutoBuilder
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                byte[] specularPng = DerivedTextureGenerator.GenerateSpecularMapPngFromImage(diffuseSrc.EncodedImageBytes);
+                // Roughness from BlenRose (Principled BSDF slider) drives specular
+                // strength: shinier (low roughness) => brighter autogen specular.
+                float roughness = jsonMaterial?.Roughness ?? DerivedTextureGenerator.DefaultAutogenRoughness;
+                byte[] specularPng = DerivedTextureGenerator.GenerateSpecularMapPngFromImage(diffuseSrc.EncodedImageBytes, roughness);
                 string generatedName = BuildGeneratedImageName(diffuseSrc.ImageName, "autogen_specular_linear_v1");
                 specularChannel = new ResolvedChannelSource(
                     "specular",
@@ -545,10 +567,7 @@ public static class GlbTextureAutoBuilder
     }
 
     /// <summary>
-    /// Computes the deterministic FULL-variant GUID for a mesh-bound channel: the GUID has
-    /// <see cref="TextureGuidStrategy.SmallVariantFlag"/> (bit 62) cleared so it is safe to use
-    /// as a mesh-channel reference. The engine resolves the full copy from cTex via this GUID,
-    /// or — on a primary lookup miss — sets bit 62 and resolves the small copy from cPres.
+    /// Computes the deterministic FULL-variant GUID for a mesh-bound channel.
     /// </summary>
     public static ulong ComputeChannelFullGuid(
         ResolvedGlbTextureSources sources,
@@ -564,166 +583,50 @@ public static class GlbTextureAutoBuilder
         return TextureGuidStrategy.KeyToGuid(textureKey);
     }
 
-    /// <summary>
-    /// Default linear downscale factor applied to the small (cPres) fallback variant.
-    /// Empirically the stock <c>DLC_DW_MegaCompund</c> distribution pairs every full↔small
-    /// sibling as exactly 8× linear (= 64× pixels), e.g. 512×512 ↔ 64×64, 256×128 ↔ 32×16.
-    /// </summary>
-    public const int DefaultSmallVariantDownscaleFactor = 8;
-
-    /// <summary>
-    /// Lower bound on the small variant's longest side, regardless of source dimensions.
-    /// 8 px keeps DXT 4×4-block encoding valid for both axes.
-    /// </summary>
-    public const int DefaultSmallVariantMinDim = 8;
-
-    /// <summary>
-    /// Controls how the lightmap channel is routed relative to the dual-tier (small cPres +
-    /// full cTex) scheme used by every other channel.
-    /// </summary>
-    /// <remarks>
-    /// Skate 3's engine loads lightmap PSGs out of the per-tile <c>cPres_&lt;X&gt;_&lt;Y&gt;_high</c>
-    /// collection (resident with that tile's geometry), NOT the streaming
-    /// <c>cTex_&lt;X&gt;_&lt;Y&gt;_high</c> collection. So lightmaps must be full-resolution and
-    /// must live in cPres, never cTex — the opposite of the diffuse/normal/specular dual-tier
-    /// policy.
-    /// </remarks>
     /// <summary>Per-channel emit decision returned by a
-    /// <see cref="ChannelPlacementResolver"/>. Lets the budget planner in
+    /// <see cref="ChannelPlacementResolver"/>. Lets the placement planner in
     /// <c>ArenaBuilder.Build</c> drive placement without this Texture-layer
     /// type referencing any Glb tile-grid types.</summary>
     public enum ChannelEmitDecision
     {
-        /// <summary>Don't write this channel into this tile at all (promoted
-        /// elsewhere, or cTex-budget-rejected).</summary>
+        /// <summary>Don't write this channel into this tile (lives elsewhere, e.g. cPres_Global).</summary>
         Skip,
-        /// <summary>Write the SMALL (mip-sliced) fallback under the
-        /// bit-62-set sibling GUID.</summary>
-        Small,
         /// <summary>Write the FULL-resolution copy under the full GUID.</summary>
         Full,
     }
 
-    /// <summary>Resolver the pipeline supplies so the budget plan (which
-    /// knows tile geometry) decides each channel's fate for the tile being
-    /// emitted. <c>fullGuid</c> is the channel's full-variant GUID;
-    /// <c>isLightmapChannel</c> lets the resolver keep the lightmap-specific
-    /// rules. Return <see cref="ChannelEmitDecision"/>.</summary>
+    /// <summary>Resolver the pipeline supplies so the placement plan decides each channel's
+    /// fate for the tile being emitted. <c>fullGuid</c> is the channel's full-variant GUID;
+    /// <c>isLightmapChannel</c> lets the resolver keep lightmap-specific rules.</summary>
     public delegate ChannelEmitDecision ChannelPlacementResolver(ulong fullGuid, bool isLightmapChannel);
-
-    public enum LightmapEmitMode
-    {
-        /// <summary>
-        /// Lightmap channel follows the same variant policy as every other channel
-        /// (full-res in a full-variant emit, 1/8 small in a small-variant emit). This is the
-        /// legacy behaviour; correct for GlobalOnly's single self-contained collection.
-        /// </summary>
-        Default,
-
-        /// <summary>
-        /// Skip the lightmap channel entirely for this emit. Used when writing a streaming
-        /// <c>cTex_*</c> tile: lightmaps must not appear in cTex.
-        /// </summary>
-        SkipLightmap,
-
-        /// <summary>
-        /// Emit the lightmap channel at FULL resolution under the FULL GUID (bit 62 clear),
-        /// even though the rest of this emit is a small (cPres) variant. The mesh material ref
-        /// points at the FULL GUID; with no cTex copy in existence the engine's primary lookup
-        /// must resolve directly out of this cPres tile, so the cPres copy has to be the
-        /// full-res, full-GUID one.
-        /// </summary>
-        CPresFullResLightmap,
-    }
 
     /// <summary>
     /// Phase 2 of the texture build — emits one Texture PSG per channel of <paramref name="sources"/>
-    /// into <paramref name="outputDirectory"/> under the FULL-variant GUID
-    /// (<see cref="ComputeChannelFullGuid"/>; bit 62 cleared). Use this for cTex tiles AND for
-    /// GlobalOnly's single self-contained collection — anywhere the texture lives at full resolution.
+    /// into <paramref name="outputDirectory"/> under the FULL-variant GUID. Used by GlobalOnly's
+    /// single self-contained collection.
     /// </summary>
-    /// <param name="lightmapMode">
-    /// For cTex tiles pass <see cref="LightmapEmitMode.SkipLightmap"/> (lightmaps never go to
-    /// cTex). For GlobalOnly's self-contained collection leave it
-    /// <see cref="LightmapEmitMode.Default"/> (the whole map is resident, so the lightmap can
-    /// live next to everything else at full res).
-    /// </param>
     /// <remarks>
-    /// The encode-once cache means BCn runs at most ONE time per (sourceBytes, encode flags,
-    /// maxDim) tuple across the whole build, regardless of how many cTex tiles end up calling this.
+    /// The encode-once cache means BCn runs at most once per (sourceBytes, encode flags,
+    /// maxDim) tuple across the whole build, regardless of how many tiles call this.
     /// </remarks>
     public static GlbTextureAutoBuildResult EmitFullToTile(
         ResolvedGlbTextureSources sources,
         string outputDirectory,
         TextureDeduplicationRegistry deduplicationRegistry,
-        LightmapEmitMode lightmapMode = LightmapEmitMode.Default,
         CancellationToken cancellationToken = default)
-        => EmitVariantToTile(
-            sources,
-            outputDirectory,
-            deduplicationRegistry,
-            isSmallVariant: false,
-            smallDownscaleFactor: 0,
-            smallMinDim: 0,
-            lightmapMode,
-            cancellationToken);
+        => EmitVariantToTile(sources, outputDirectory, deduplicationRegistry, placement: null, cancellationToken);
 
     /// <summary>
-    /// Phase 2 of the texture build — emits one Texture PSG per channel of <paramref name="sources"/>
-    /// into <paramref name="outputDirectory"/> under the SMALL-variant GUID
-    /// (full GUID with <see cref="TextureGuidStrategy.SmallVariantFlag"/> set). Use this for the
-    /// per-cPres-tile fallback copies. Each channel is downscaled to
-    /// <c>max(smallMinDim, max(srcW, srcH) / smallDownscaleFactor)</c> on its longest side, mirroring
-    /// the empirical 1/8-linear pairing observed in stock content.
-    /// </summary>
-    /// <param name="lightmapMode">
-    /// For per-tile cPres emits pass <see cref="LightmapEmitMode.CPresFullResLightmap"/>: the
-    /// lightmap channel is then written full-res under the FULL GUID (bit 62 clear) so the
-    /// engine's primary lookup resolves it straight out of this cPres tile, while
-    /// diffuse/normal/specular still get the 1/8 small fallback treatment.
-    /// </param>
-    public static GlbTextureAutoBuildResult EmitSmallToTile(
-        ResolvedGlbTextureSources sources,
-        string outputDirectory,
-        TextureDeduplicationRegistry deduplicationRegistry,
-        int smallDownscaleFactor = DefaultSmallVariantDownscaleFactor,
-        int smallMinDim = DefaultSmallVariantMinDim,
-        LightmapEmitMode lightmapMode = LightmapEmitMode.CPresFullResLightmap,
-        CancellationToken cancellationToken = default)
-        => EmitVariantToTile(
-            sources,
-            outputDirectory,
-            deduplicationRegistry,
-            isSmallVariant: true,
-            smallDownscaleFactor: Math.Max(1, smallDownscaleFactor),
-            smallMinDim: Math.Max(1, smallMinDim),
-            lightmapMode,
-            cancellationToken);
-
-    /// <summary>
-    /// Budget-planned emit. The <paramref name="placement"/> resolver decides
-    /// Skip / Small / Full per channel for the specific tile this call writes
-    /// into. Used by the Stage-2 budget pipeline; for GlobalOnly the legacy
-    /// <see cref="EmitFullToTile"/> path (no resolver) still applies.
+    /// Placement-planned emit. The <paramref name="placement"/> resolver decides Skip / Full per
+    /// channel for the specific tile this call writes into.
     /// </summary>
     public static GlbTextureAutoBuildResult EmitPlanned(
         ResolvedGlbTextureSources sources,
         string outputDirectory,
         TextureDeduplicationRegistry deduplicationRegistry,
         ChannelPlacementResolver placement,
-        int smallDownscaleFactor = DefaultSmallVariantDownscaleFactor,
-        int smallMinDim = DefaultSmallVariantMinDim,
         CancellationToken cancellationToken = default)
-        => EmitVariantToTile(
-            sources,
-            outputDirectory,
-            deduplicationRegistry,
-            isSmallVariant: false,
-            smallDownscaleFactor: Math.Max(1, smallDownscaleFactor),
-            smallMinDim: Math.Max(1, smallMinDim),
-            LightmapEmitMode.Default,
-            placement,
-            cancellationToken);
+        => EmitVariantToTile(sources, outputDirectory, deduplicationRegistry, placement, cancellationToken);
 
     /// <summary>
     /// Resolve a source's channels and report each one's full GUID, encoded
@@ -782,23 +685,6 @@ public static class GlbTextureAutoBuilder
         ResolvedGlbTextureSources sources,
         string outputDirectory,
         TextureDeduplicationRegistry deduplicationRegistry,
-        bool isSmallVariant,
-        int smallDownscaleFactor,
-        int smallMinDim,
-        LightmapEmitMode lightmapMode,
-        CancellationToken cancellationToken)
-        => EmitVariantToTile(
-            sources, outputDirectory, deduplicationRegistry, isSmallVariant,
-            smallDownscaleFactor, smallMinDim, lightmapMode, placement: null, cancellationToken);
-
-    private static GlbTextureAutoBuildResult EmitVariantToTile(
-        ResolvedGlbTextureSources sources,
-        string outputDirectory,
-        TextureDeduplicationRegistry deduplicationRegistry,
-        bool isSmallVariant,
-        int smallDownscaleFactor,
-        int smallMinDim,
-        LightmapEmitMode lightmapMode,
         ChannelPlacementResolver? placement,
         CancellationToken cancellationToken)
     {
@@ -827,9 +713,6 @@ public static class GlbTextureAutoBuilder
             sources.AttributorMaterialStream,
             sources.ChannelConfig);
 
-        // Returns the FULL-variant GUID for every channel (bit 62 clear) — that is what mesh
-        // channels reference regardless of which variant we emitted into this tile. The engine
-        // performs the small-variant retry by ORing bit 62 if the full lookup misses.
         ulong? EmitChannel(ResolvedChannelSource? channel)
         {
             if (channel == null) return null;
@@ -839,13 +722,6 @@ public static class GlbTextureAutoBuilder
             bool preserveAlpha = channel.NeedsAlpha && !isNormalChannel;
             bool reduceBc1NormalArtifacts = isNormalChannel && !channel.SourceIsDds;
 
-            // SINGLE encode for this channel — full resolution, full mip
-            // chain — shared across every tile via the encode-once cache.
-            // Must run BEFORE the GUID/placement decision because Stage 3's
-            // GUID is content-addressed (derived from the encoded DDS), so
-            // there is nothing to key the plan on until the bytes exist.
-            // The small (cPres) variant is a byte-slice of this chain, never
-            // a second encode (port of BlenRose's _dds_pick_small_variant).
             DdsTextureInput fullDds;
             try
             {
@@ -864,89 +740,18 @@ public static class GlbTextureAutoBuilder
                 return null;
             }
 
-            // Stage 3: content-addressed GUID — function of the encoded DDS
-            // only (port of BlenRose _tex_guid_from_dedupe_key). Identical
-            // content anywhere collapses to one GUID / one PSG.
             ulong fullGuid = TextureGuidStrategy.ContentAddressedFullGuid(fullDds);
 
-            bool channelEmitsAsSmall = isSmallVariant;
-
-            // Stage-2 budget plan resolver (when supplied) is authoritative:
-            // decides Skip / Small / Full for THIS channel in THIS tile,
-            // keyed on the content-addressed GUID computed above.
             if (placement != null)
             {
                 ChannelEmitDecision decision = placement(fullGuid, channel.IsLightmapChannel);
-                switch (decision)
-                {
-                    case ChannelEmitDecision.Skip:
-                        // Don't write a PSG into THIS tile — but still report
-                        // the full GUID so the mesh material binds it. The
-                        // bytes live in cPres_Global (promoted) or a cTex tile
-                        // (streamed); the engine's full-GUID lookup (with the
-                        // bit-62 cPres fallback retry) resolves it at runtime.
-                        return fullGuid;
-                    case ChannelEmitDecision.Small:
-                        channelEmitsAsSmall = true;
-                        break;
-                    case ChannelEmitDecision.Full:
-                        channelEmitsAsSmall = false;
-                        break;
-                }
+                if (decision == ChannelEmitDecision.Skip)
+                    return fullGuid;
             }
-            else if (channel.IsLightmapChannel)
-            {
-                // Legacy (GlobalOnly / no-plan) path: lightmap routing
-                // overrides the dual-tier policy. Skate's engine pulls
-                // lightmap PSGs out of the resident per-tile cPres
-                // collection, never the streamed cTex one — a cTex emit
-                // drops the lightmap; a per-tile cPres (small) emit promotes
-                // it to full-res / full-GUID so the mesh ref's primary
-                // lookup resolves straight out of that cPres tile.
-                switch (lightmapMode)
-                {
-                    case LightmapEmitMode.SkipLightmap:
-                        return null;
-                    case LightmapEmitMode.CPresFullResLightmap:
-                        channelEmitsAsSmall = false;
-                        break;
-                    case LightmapEmitMode.Default:
-                    default:
-                        break;
-                }
-            }
-
-            DdsTextureInput ddsInput = fullDds;
-            bool wroteSmall = false;
-            if (channelEmitsAsSmall)
-            {
-                if (DdsMipSlicer.TrySliceSmallVariant(
-                        fullDds, smallDownscaleFactor, smallMinDim, out DdsTextureInput? small)
-                    && small != null)
-                {
-                    ddsInput = small;
-                    wroteSmall = true;
-                }
-                else
-                {
-                    // No usable deeper mip (single-mip source, or already
-                    // small enough that the slice level clamps to 0).
-                    // BlenRose's `_resolve_small → None`: emit the FULL
-                    // texture into the cPres tile under the FULL GUID. The
-                    // mesh ref's primary lookup resolves it straight out of
-                    // this resident tile; no broken tiny re-encode.
-                    ddsInput = fullDds;
-                    wroteSmall = false;
-                }
-            }
-
-            ulong writeGuid = wroteSmall
-                ? TextureGuidStrategy.MakeSmallVariantGuid(fullGuid)
-                : fullGuid;
 
             var psg = deduplicationRegistry.WriteLogicalGuidPsg(
-                ddsInput,
-                writeGuid,
+                fullDds,
+                fullGuid,
                 channel.MeshChannelName,
                 channel.ImageName,
                 outputDirectory);
@@ -1189,7 +994,7 @@ public static class GlbTextureAutoBuilder
         lock (writeLock)
         {
             using var fs = File.Create(outPath);
-            GenericArenaWriter.Write(spec, fs);
+            GeneralArenaBuilder.Write(spec, fs, ArenaPlatform.Ps3);
         }
 
         return new BuiltTexturePsg(meshChannelName, imageName, ddsInput.Width, ddsInput.Height, textureGuid, outPath);

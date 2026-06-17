@@ -5,74 +5,32 @@ using ArenaBuilder.Collision;
 using ArenaBuilder.Collision.Validation;
 using ArenaBuilder.Core;
 using ArenaBuilder.Core.Psg;
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.AIPath;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Irradiance;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.WorldPainter;
+using ArenaBuilder.Core.Platforms.PS3.Pegasus.AIPath;
+using ArenaBuilder.Core.Platforms.PS3.Pegasus.Irradiance;
 using ArenaBuilder.Core.Platforms.PS3.Pegasus.WorldPainter;
 using ArenaBuilder.Glb;
 using ArenaBuilder.Mesh;
 using ArenaBuilder.NavPower;
 using ArenaBuilder.Texture;
 using ArenaBuilder.WorldPainter;
-using SharpGLTF.Schema2;
-using System.Threading;
+
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 
 namespace ArenaBuilder.Build;
 
 /// <summary>
 /// Two-phase tile-based build: accumulate mesh/collision per tile from GLBs, then emit PSGs to
-/// <c>cPres_U_V_high</c> (mesh + small fallback textures), <c>cSim_U_V_high</c> (collision), and
-/// <c>cTex_X_Y_high</c> (full-resolution textures on a separate 100-unit grid).
+/// <c>cPres_U_V_high</c> (mesh + textures) and <c>cSim_U_V_high</c> (collision). Every
+/// full-resolution texture lives either in <c>cPres_Global</c> (shared by 2+ cPres tiles, picked
+/// by <see cref="TexturePlacementPlanner"/>) or in the owning cPres tile (unique-to-tile).
 ///
-/// <para>
-/// Texture policy (dual-tier, derived from sk82_na_f.xex analysis + empirical verification of
-/// stock <c>DLC_DW_MegaCompund</c> and <c>DIST_University</c> content):
-/// </para>
-/// <list type="number">
-///   <item>
-///     <b>cPres-side fallback</b>: every texture a mesh references is emitted into its owning
-///     <c>cPres_U_V_high</c> folder as a SMALL (1/8 linear of source) BCn copy under the
-///     SMALL-variant GUID (<c>G | 0x4000_0000_0000_0000</c>; bit 62 set). This copy is always
-///     loaded with the geometry so the engine's GUID-fallback retry resolves it whenever the cTex
-///     stream isn't paged in.
-///   </item>
-///   <item>
-///     <b>cTex-side full-resolution</b>: for each GLB, <b>union</b> (a) cTex cells overlapping each
-///     tile-split mesh piece’s XZ AABB (<see cref="WorldTileGrid.GetCTexTilesOverlappingAabbXY"/> on
-///     <see cref="MeshVertexFlattener.Result"/> bounds in <see cref="TileMeshAccumulator.Parts"/>),
-///     and (b) one &quot;home&quot; cTex per used cPres from
-///     <see cref="WorldTileGrid.AssignPresTilesToCTexCover"/> (a corner of each cPres’s 2×2 overlap).
-///     (a) avoids undivided-mesh AABB fanout; (b) matches where the game streams full <c>G</c> so
-///     you are not stuck on the cPres small variant when AABB-only placement missed the active
-///     cTex collection. The FULL GUID <c>G</c> (bit 62 clear) is written to every cTex in that union.
-///   </item>
-///   <item>
-///     <b>Bit-62 sibling GUIDs</b>: small (cPres) and full (cTex) copies share the same family GUID,
-///     differing only in bit 62. Mesh material channels always reference <c>G</c>; the engine's
-///     texture-lookup path tries <c>G</c> first and on miss ORs <c>0x4000_0000_0000_0000</c> to
-///     find the small fallback. Verified empirically: 70 of 70 sibling pairs in stock content match
-///     this rule exactly, and 1247 of 1247 mesh-channel→Texture-TOC resolutions reference the
-///     bit-62-clear member.
-///   </item>
-/// </list>
+/// <para><see cref="TileBuildOptions.GlobalOnly"/> writes everything into a single
+/// <c>cPres_Global</c> collection.</para>
 ///
-/// <para>
-/// <see cref="TileBuildOptions.GlobalOnly"/> writes everything (mesh + full-resolution textures)
-/// into a single <c>cPres_Global</c> collection. No cTex folders are emitted in that mode.
-/// </para>
-///
-/// <para>
-/// Verified against Skate 2 (sk82_na_f.xex):
-/// </para>
-/// <list type="bullet">
-///   <item><c>AssetPaths::tStreamType</c> enum: kStreamType_Pres=0, kStreamType_Sim=1, kStreamType_Texture=2.</item>
-///   <item><c>AssetPaths::BuildStreamPath</c> (<c>0x828a32f0</c>) suffix table at <c>0x82d5cad8</c> → "Pres" / "Sim" / "Tex".</item>
-///   <item><c>c%s_%.f_%.f_high</c> tile name format at <c>0x8229ae50</c> (used by both cPres and cTex; only the suffix differs).</item>
-///   <item><c>cAssetStreamSystem::ParseXmlStreamTile</c> (<c>0x824031a0</c>): per StreamTile XML entry,
-///   activates the center collection plus up to 16 neighbors. With 8-neighbor (3x3) entries the
-///   engine keeps a 9-tile window of cTex loaded as the player moves — a texture present in any
-///   of those 9 tiles satisfies a mesh that uses it.</item>
-///   <item><c>cStreamFile::Update</c> (<c>0x82405c68</c>): octree-driven activation per stream type;
-///   cPres / cSim / cTex are independent grids.</item>
-/// </list>
 /// cSim tile collision uses per-tile folders; <see cref="TileBuildOptions.GlobalOnly"/> also uses <c>cSim_Global</c> for collision.
 /// WorldPainter: emit at most one WP PSG per 128 m GenTileId cell. Multiple stream tiles can map to the same
 /// cell when tile size is under 128 m; only the lexicographically first (U,V) tile ("owner") emits WP. RegisterStreamedTile (82ADFB60)
@@ -180,7 +138,13 @@ public static class TileBuildPipeline
         // Phase 1: Accumulate per-tile (multiple sources can contribute to the same tile).
         var meshByTile = new ConcurrentDictionary<WorldTileGrid.TileKey, TileMeshAccumulator>();
         var collisionByTile = new ConcurrentDictionary<WorldTileGrid.TileKey, TileCollisionAccumulator>();
-        var glbInfoByPath = new ConcurrentDictionary<string, (string GlbStem, string? JsonPath, string MaterialName)>(StringComparer.OrdinalIgnoreCase);
+        // Accumulator for primitives whose BlenRose material has `include_in_cpres_global = true`.
+        // These primitives bypass tile splitting and end up in a single cPres_Global mesh PSG —
+        // intended for assets visible from many tiles (sky, distant LODs, big landmarks) so
+        // they aren't duplicated per tile.
+        var globalMeshAcc = new TileMeshAccumulator(meshScale);
+        var globalMeshAccUsedByMaterial = new ConcurrentDictionary<(string GlbPath, string MaterialName), byte>();
+        var glbInfoByPath = new ConcurrentDictionary<string, (string GlbStem, string? JsonPath)>(StringComparer.OrdinalIgnoreCase);
 
         var sourceByKey = new Dictionary<string, IBuildSource>(StringComparer.OrdinalIgnoreCase);
         foreach (var s in sources) sourceByKey[s.SourceKey] = s;
@@ -220,6 +184,7 @@ public static class TileBuildPipeline
                     var primMat = materialsDb?.TryGetMaterial(r.MaterialName);
                     bool skipCollisionForMaterial = primMat?.ExcludeCollision == true;
                     bool skipPresForMaterial = primMat?.ExcludePres == true;
+                    bool routeToGlobalForMaterial = primMat?.IncludeInCpresGlobal == true;
                     int surfaceId = 0;
                     if (!skipCollisionForMaterial && materialsDb != null)
                     {
@@ -233,11 +198,21 @@ public static class TileBuildPipeline
                                 matForSurface.Collision.SurfacePattern);
                     }
 
+                    // cPres_Global routing: the primitive's full mesh goes into the global
+                    // accumulator with no tile split. Collision still flows through the
+                    // per-tile path so a global landmark still contributes to local cSim
+                    // when not also marked ExcludeCollision.
+                    if (routeToGlobalForMaterial && !tileOptions.CSimOnly && !skipPresForMaterial)
+                    {
+                        globalMeshAcc.AddPart(r, sourceKey, glbStem);
+                        globalMeshAccUsedByMaterial.TryAdd((sourceKey, r.MaterialName), 0);
+                    }
+
                     var splitByTile = SplitMeshResultIntoTiles(r, tileOptions, cancellationToken);
                     foreach (var (tile, splitChunks) in splitByTile)
                     {
                         ValidateTileKey(tile, tileOptions);
-                        if (!tileOptions.CSimOnly && !skipPresForMaterial)
+                        if (!tileOptions.CSimOnly && !skipPresForMaterial && !routeToGlobalForMaterial)
                             tilesUsed.Add(tile);
 
                         if (!tileOptions.CPresOnly && !skipCollisionForMaterial)
@@ -246,7 +221,9 @@ public static class TileBuildPipeline
                             foreach (var splitChunk in splitChunks)
                                 colAcc.AddChunk(splitChunk.Positions, IndicesToFaces(splitChunk.Indices), surfaceId, null);
                         }
-                        if (!tileOptions.CSimOnly && !skipPresForMaterial)
+                        // Per-tile mesh accumulation is skipped when this primitive is routed
+                        // to cPres_Global — it must live in exactly one place.
+                        if (!tileOptions.CSimOnly && !skipPresForMaterial && !routeToGlobalForMaterial)
                         {
                             var meshAcc = meshByTile.GetOrAdd(tile, _ => new TileMeshAccumulator(meshScale));
                             foreach (var splitChunk in splitChunks)
@@ -257,7 +234,7 @@ public static class TileBuildPipeline
 
                 if (tilesUsed.Count > 0 && meshResults.Count > 0)
                 {
-                    glbInfoByPath[sourceKey] = (glbStem, sidecarMaterialsJsonPath, dominantMaterialName);
+                    glbInfoByPath[sourceKey] = (glbStem, sidecarMaterialsJsonPath);
                 }
             }
             catch (InvalidOperationException ex)
@@ -276,108 +253,55 @@ public static class TileBuildPipeline
             }
         }
 
-        // Build texture contexts from tiles that use each GLB (for texture routing).
-        var textureContextsByGlb = new Dictionary<string, TextureBuildContext>(StringComparer.OrdinalIgnoreCase);
-        var glbToTiles = new Dictionary<string, HashSet<WorldTileGrid.TileKey>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (tile, acc) in meshByTile)
-        {
-            foreach (var (_, glbPath, _) in acc.Parts)
-            {
-                if (!glbToTiles.TryGetValue(glbPath, out var set))
-                {
-                    set = new HashSet<WorldTileGrid.TileKey>();
-                    glbToTiles[glbPath] = set;
-                }
-                set.Add(tile);
-            }
-        }
-        // Per-GLB union of cTex tiles that overlap each tile-split mesh piece's XZ AABB (after
-        // clip to cPres tile bounds, before vertex-budget PSG chunking). Not the undivided mesh AABB.
-        var cTexFullTargetsByGlb = new Dictionary<string, HashSet<WorldTileGrid.CTexTileKey>>(
-            StringComparer.OrdinalIgnoreCase);
+        // Build texture contexts per (GLB, material) — a single GLB may carry many
+        // materials (BlenRose's single-scene.glb export). Each material gets its own
+        // texture resolve + emit; the per-tile texture build is keyed by
+        // (tile, glbPath, materialName) so a tile's mesh PSG can wire each primitive
+        // to its own material's textures.
+        var textureContextsByGlbMaterial = new Dictionary<(string GlbPath, string MaterialName), TextureBuildContext>();
+        var glbMaterialToTiles = new Dictionary<(string GlbPath, string MaterialName), HashSet<WorldTileGrid.TileKey>>();
         foreach (var (tile, acc) in meshByTile)
         {
             foreach (var (r, glbPath, _) in acc.Parts)
             {
-                if (!cTexFullTargetsByGlb.TryGetValue(glbPath, out var ctSet))
+                var key = (glbPath, r.MaterialName);
+                if (!glbMaterialToTiles.TryGetValue(key, out var set))
                 {
-                    ctSet = new HashSet<WorldTileGrid.CTexTileKey>();
-                    cTexFullTargetsByGlb[glbPath] = ctSet;
+                    set = new HashSet<WorldTileGrid.TileKey>();
+                    glbMaterialToTiles[key] = set;
                 }
-                var min = r.Bounds.Min;
-                var max = r.Bounds.Max;
-                foreach (var ct in WorldTileGrid.GetCTexTilesOverlappingAabbXY(
-                             min.X,
-                             max.X,
-                             min.Z,
-                             max.Z,
-                             tileOptions.TileSize,
-                             tileOptions.OriginX,
-                             tileOptions.OriginY))
-                    ctSet.Add(ct);
+                set.Add(tile);
             }
         }
-
-        foreach (var (glbPath, info) in glbInfoByPath)
+        foreach (var (key, tilesUsed) in glbMaterialToTiles)
         {
-            if (glbToTiles.TryGetValue(glbPath, out var tilesUsed))
+            if (glbInfoByPath.TryGetValue(key.GlbPath, out var info))
             {
-                cTexFullTargetsByGlb.TryGetValue(glbPath, out var cTexFromSplitMesh);
-                if (cTexFromSplitMesh == null)
-                    cTexFromSplitMesh = new HashSet<WorldTileGrid.CTexTileKey>();
-                // Union split-mesh AABB cTex (per-tile clip, not undivided AABB) with greedy
-                // "home" cTex per cPres. AABB alone can omit the collection the streamer resolves
-                // in-game, leaving only the cPres small fallback in view.
-                var cTexUnion = new HashSet<WorldTileGrid.CTexTileKey>(cTexFromSplitMesh);
-                foreach (var ct in WorldTileGrid.AssignPresTilesToCTexCover(tilesUsed).Values)
-                    cTexUnion.Add(ct);
-                textureContextsByGlb[glbPath] = new TextureBuildContext(
-                    glbPath,
+                textureContextsByGlbMaterial[key] = new TextureBuildContext(
+                    key.GlbPath,
                     info.GlbStem,
                     info.JsonPath,
-                    info.MaterialName,
-                    tilesUsed,
-                    cTexUnion);
+                    key.MaterialName,
+                    tilesUsed);
             }
         }
 
-        // Phase 2A: Emit textures using the dual-tier scheme.
+        // Phase 2A: Emit textures.
         //
-        //   1) For each cPres tile that uses a GLB: emit a SMALL (1/8 linear) under GUID G|(1<<62).
-        //   2) For each GLB: cTex = union(split-mesh AABB, AssignPresTilesToCTexCover(TilesUsed)).
-        //      Full-res under GUID G. If empty, fall back to cover-only.
-        //   3) GlobalOnly: full-res in cPres_Global only; no small/cTex split.
+        //   1) Shared (≥2 cPres tiles) → one full-res copy in cPres_Global.
+        //   2) Unique-to-tile → one full-res copy in the owning cPres tile.
+        //   3) Lightmaps → always full-res in every owning cPres tile.
+        //   4) GlobalOnly: everything full-res in cPres_Global.
         //
-        // Mesh PSGs reference the FULL GUID G. Engine tries G, then G|(1<<62) for cPres fallback.
-        //
-        // Performance:
-        //   - Outer loop is parallel over GLBs (one worker == one GLB).
-        //   - ResolveSourcesFromGlb runs ONCE per GLB (GLB load + JSON + autogen normal/specular).
-        //   - EmitFullToTile / EmitSmallToTile + GetOrEncode caches BCn encoding per
-        //     (sourceBytes, flags, size), so the small variant encodes once per logical texture
-        //     across the whole build, and the full variant encodes once per logical texture across
-        //     the whole build — total at most 2 BCn runs per logical texture per build, regardless
-        //     of tile count.
-        //
-        // GUID rule (engine fallback policy, empirically verified against stock content):
-        //   - Full-resolution copy (cTex, GlobalOnly): GUID G with bit 62 == 0 (the FULL variant).
-        //   - Small fallback copy (cPres):             GUID G | (1<<62)            (the SMALL variant).
-        //   - Mesh material channels reference the FULL GUID G in BOTH layouts.
-        //   - On a primary lookup miss for G the engine ORs (1<<62) and re-queries → resolves the
-        //     small fallback the cPres tile already has loaded.
-        var textureBuildByTileGlb = new ConcurrentDictionary<(WorldTileGrid.TileKey Tile, string GlbPath), GlbTextureAutoBuilder.GlbTextureAutoBuildResult>();
+        // Mesh PSGs reference the FULL GUID G. The engine resolves G via cPres_Global
+        // (always resident) or the local cPres tile (always resident in the 3×3 window).
+        var textureBuildByTileGlb = new ConcurrentDictionary<(WorldTileGrid.TileKey Tile, string GlbPath, string MaterialName), GlbTextureAutoBuilder.GlbTextureAutoBuildResult>();
         var tileFoldersCreated = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         int createdCount = 0;
-        var textureDeduper = new TextureDeduplicationRegistry(log);
+        var textureDeduper = new TextureDeduplicationRegistry(log, tileOptions.TargetPlatform);
 
         string folderSuffix = tileOptions.FolderSuffix ?? "";
         string cPresGlobalDir = Path.Combine(baseDir, CPresGlobalFolder + folderSuffix);
-
-        if (!tileOptions.GlobalOnly)
-        {
-            log("[TextureCTex] Full-res: union( split-mesh AABB cTex, greedy home cTex per cPres ) per GLB — " +
-                "AABB alone can miss the streamed collection; +cover fixes low-res-only in-game.");
-        }
 
         int textureMaxDegree = Math.Max(1, Environment.ProcessorCount - 1);
         var parallelOpts = new ParallelOptions { MaxDegreeOfParallelism = textureMaxDegree, CancellationToken = cancellationToken };
@@ -415,7 +339,7 @@ public static class TileBuildPipeline
             // Single self-contained collection: full-res textures live next to
             // mesh PSGs under their FULL GUID (bit 62 clear). No small variants
             // or budget plan — the entire map is resident, nothing to stream.
-            Parallel.ForEach(textureContextsByGlb.Values, parallelOpts, textureContext =>
+            Parallel.ForEach(textureContextsByGlbMaterial.Values, parallelOpts, textureContext =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var resolvedSources = ResolveFor(textureContext);
@@ -429,7 +353,7 @@ public static class TileBuildPipeline
                     cancellationToken: cancellationToken);
 
                 foreach (var presTile in textureContext.TilesUsed)
-                    textureBuildByTileGlb[(presTile, textureContext.GlbPath)] = textureBuild;
+                    textureBuildByTileGlb[(presTile, textureContext.GlbPath, textureContext.MaterialName)] = textureBuild;
                 LogBuildOutputs(textureBuild);
             });
         }
@@ -438,15 +362,15 @@ public static class TileBuildPipeline
             // ── Stage 2: budget-driven tier placement (port of BlenRose) ──
             // Pass A — resolve + measure (parallel). The full encode each
             // MeasureChannels triggers is cached, so the emit pass reuses it.
-            var resolvedByGlb = new ConcurrentDictionary<string, GlbTextureAutoBuilder.ResolvedGlbTextureSources>(StringComparer.OrdinalIgnoreCase);
+            var resolvedByGlbMaterial = new ConcurrentDictionary<(string GlbPath, string MaterialName), GlbTextureAutoBuilder.ResolvedGlbTextureSources>();
             var logicalByGuid = new ConcurrentDictionary<ulong, TexturePlacementPlanner.LogicalTexture>();
 
-            Parallel.ForEach(textureContextsByGlb.Values, parallelOpts, textureContext =>
+            Parallel.ForEach(textureContextsByGlbMaterial.Values, parallelOpts, textureContext =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var resolvedSources = ResolveFor(textureContext);
                 if (resolvedSources == null) return;
-                resolvedByGlb[textureContext.GlbPath] = resolvedSources;
+                resolvedByGlbMaterial[(textureContext.GlbPath, textureContext.MaterialName)] = resolvedSources;
 
                 foreach (var (_, fullGuid, payloadSize, isLightmap) in
                          GlbTextureAutoBuilder.MeasureChannels(resolvedSources, textureDeduper, cancellationToken))
@@ -457,7 +381,6 @@ public static class TileBuildPipeline
                         lt.PayloadSize = Math.Max(lt.PayloadSize, payloadSize);
                         lt.IsLightmap |= isLightmap;
                         foreach (var pt in textureContext.TilesUsed) lt.CPresTiles.Add(pt);
-                        foreach (var ct in textureContext.CTexFullTargets) lt.CTexCandidates.Add(ct);
                     }
                 }
             });
@@ -465,11 +388,11 @@ public static class TileBuildPipeline
             // Pass B — plan (single-threaded, pure).
             var plan = TexturePlacementPlanner.Build(logicalByGuid.Values.ToList(), log);
 
-            // Pass C — emit per plan (parallel over GLBs).
-            Parallel.ForEach(textureContextsByGlb.Values, parallelOpts, textureContext =>
+            // Pass C — emit per plan (parallel over GLB+material contexts).
+            Parallel.ForEach(textureContextsByGlbMaterial.Values, parallelOpts, textureContext =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!resolvedByGlb.TryGetValue(textureContext.GlbPath, out var resolvedSources))
+                if (!resolvedByGlbMaterial.TryGetValue((textureContext.GlbPath, textureContext.MaterialName), out var resolvedSources))
                     return; // resolve failed in pass A; already logged
 
                 // (1) Promoted textures → one shared cPres_Global copy
@@ -487,9 +410,8 @@ public static class TileBuildPipeline
                     cancellationToken: cancellationToken);
                 LogBuildOutputs(promotedBuild);
 
-                // (2) cPres tiles — small fallback for streamed textures,
-                //     full-res for lightmaps + demoted/no-cTex textures,
-                //     skip promoted (resolved from cPres_Global). The build
+                // (2) cPres tiles — full-res for lightmaps + non-promoted textures.
+                //     Promoted textures live exclusively in cPres_Global. The build
                 //     result carries the FULL GUIDs for mesh material wiring.
                 foreach (var presTile in textureContext.TilesUsed)
                 {
@@ -501,57 +423,19 @@ public static class TileBuildPipeline
                     if (tileFoldersCreated.TryAdd(presTileDir, 0))
                         Directory.CreateDirectory(presTileDir);
 
-                    var pt = presTile;
                     GlbTextureAutoBuilder.ChannelEmitDecision CPresResolver(ulong g, bool isLm)
                     {
-                        if (isLm) return GlbTextureAutoBuilder.ChannelEmitDecision.Full;        // lightmaps always full-res in cPres
+                        if (isLm) return GlbTextureAutoBuilder.ChannelEmitDecision.Full;
                         if (plan.Promoted.Contains(g)) return GlbTextureAutoBuilder.ChannelEmitDecision.Skip;
-                        return plan.CPresWantsSmall(g, pt)
-                            ? GlbTextureAutoBuilder.ChannelEmitDecision.Small
-                            : GlbTextureAutoBuilder.ChannelEmitDecision.Full;                   // demoted / no reachable cTex
+                        return GlbTextureAutoBuilder.ChannelEmitDecision.Full;
                     }
 
-                    var smallBuild = GlbTextureAutoBuilder.EmitPlanned(
+                    var perTileBuild = GlbTextureAutoBuilder.EmitPlanned(
                         resolvedSources, presTileDir, textureDeduper, CPresResolver,
-                        smallDownscaleFactor: tileOptions.CPresSmallVariantDownscaleFactor,
-                        smallMinDim: tileOptions.CPresSmallVariantMinDim,
                         cancellationToken: cancellationToken);
 
-                    textureBuildByTileGlb[(presTile, textureContext.GlbPath)] = smallBuild;
-                    LogBuildOutputs(smallBuild);
-                }
-
-                // (3) cTex tiles — full-res only for textures the budget pass
-                //     KEPT for that specific cTex tile. Lightmaps + promoted +
-                //     budget-rejected → skipped here.
-                var cTexCandidates = textureContext.CTexFullTargets;
-                if (cTexCandidates.Count == 0)
-                    cTexCandidates = new HashSet<WorldTileGrid.CTexTileKey>(
-                        WorldTileGrid.AssignPresTilesToCTexCover(textureContext.TilesUsed).Values);
-
-                foreach (var ctex in cTexCandidates)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    string ctexDir = Path.Combine(baseDir,
-                        WorldTileGrid.BuildCTexFolderName(ctex, tileOptions.TileSize,
-                            tileOptions.OriginX, tileOptions.OriginY, tileOptions.TileSuffix) + folderSuffix);
-                    if (tileFoldersCreated.TryAdd(ctexDir, 0))
-                        Directory.CreateDirectory(ctexDir);
-
-                    var ct = ctex;
-                    GlbTextureAutoBuilder.ChannelEmitDecision CTexResolver(ulong g, bool isLm)
-                    {
-                        if (isLm) return GlbTextureAutoBuilder.ChannelEmitDecision.Skip;        // lightmaps never in cTex
-                        if (plan.Promoted.Contains(g)) return GlbTextureAutoBuilder.ChannelEmitDecision.Skip;
-                        return plan.CTexKeepsFull(g, ct)
-                            ? GlbTextureAutoBuilder.ChannelEmitDecision.Full
-                            : GlbTextureAutoBuilder.ChannelEmitDecision.Skip;                   // budget-rejected
-                    }
-
-                    var fullBuild = GlbTextureAutoBuilder.EmitPlanned(
-                        resolvedSources, ctexDir, textureDeduper, CTexResolver,
-                        cancellationToken: cancellationToken);
-                    LogBuildOutputs(fullBuild);
+                    textureBuildByTileGlb[(presTile, textureContext.GlbPath, textureContext.MaterialName)] = perTileBuild;
+                    LogBuildOutputs(perTileBuild);
                 }
             });
         }
@@ -567,12 +451,12 @@ public static class TileBuildPipeline
         if (textureDeduper.LogicalWritesAttempted > 0)
             log($"[TextureLogicalWrites] {textureDeduper.LogicalWritesAttempted - textureDeduper.LogicalWritesSkipped} PSG(s) written, {textureDeduper.LogicalWritesSkipped} skipped (already written this build).");
 
-        // Ensure every (tile, glbPath) that appears in mesh parts has a texture build (or empty).
+        // Ensure every (tile, glbPath, materialName) that appears in mesh parts has a texture build (or empty).
         foreach (var (tile, acc) in meshByTile)
         {
-            foreach (var (_, glbPath, _) in acc.Parts)
+            foreach (var (r, glbPath, _) in acc.Parts)
             {
-                var key = (tile, glbPath);
+                var key = (tile, glbPath, r.MaterialName);
                 if (!textureBuildByTileGlb.ContainsKey(key))
                     textureBuildByTileGlb[key] = emptyTextureBuild;
             }
@@ -625,23 +509,103 @@ public static class TileBuildPipeline
 
                 int chunkIndex = 0;
                 string? materialOverride = (folderSuffix == "_proxy") ? "proxyworld.default" : null;
-                foreach (var input in acc.BuildChunkedMeshInputs(tile, textureBuildByTileGlb, glbInfoByPath, maxMeshesPerPsg, maxVerticesPerMeshPsg, materialOverride, log))
+                foreach (var input in acc.BuildChunkedMeshInputs(tile, textureBuildByTileGlb, maxMeshesPerPsg, maxVerticesPerMeshPsg, materialOverride, log))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     if (input == null) continue;
 
                     string meshHash = Lookup8Hash.HashStringToHex(meshHashPrefix + chunkIndex);
-                    string meshOutPath = Path.Combine(meshWriteDir, meshHash + ".psg");
+                    string meshOutPath = Path.Combine(meshWriteDir, meshHash + tileOptions.PsgExtension);
 
-                    var spec = MeshPsgComposer.Compose(input);
+                    var spec = tileOptions.TargetPlatform == ArenaPlatform.Xbox360
+                        ? MeshRX2Composer.Compose(input)
+                        : MeshPsgComposer.Compose(input);
                     using (var fs = File.Create(meshOutPath))
-                        GenericArenaWriter.Write(spec, fs);
+                        GeneralArenaBuilder.Write(spec, fs, tileOptions.TargetPlatform);
                     log($"[Mesh PSG] {meshOutPath} ({input.Parts.Count} part(s))");
                     Interlocked.Increment(ref createdCount);
                     ThrowIfTooManyOutputs(createdCount, tileOptions);
                     chunkIndex++;
                 }
             });
+
+            // Phase 2B-global: emit primitives marked "Include in cPres_Global" as one
+            // (possibly chunked) mesh PSG batch under cPres_Global. These never appear in
+            // per-tile cPres folders — they sit in the global folder so the engine resolves
+            // them once regardless of the active tile.
+            if (globalMeshAcc.Parts.Count > 0)
+            {
+                Directory.CreateDirectory(cPresGlobalDir);
+
+                // Sentinel TileKey for the global bucket (will not collide with any real tile,
+                // which uses small signed grid coordinates near origin).
+                var globalSentinelTile = new WorldTileGrid.TileKey(int.MinValue, int.MinValue);
+
+                // Build + emit full-res textures for every (glb, material) used by the
+                // global mesh, writing them next to the mesh PSGs in cPres_Global. The
+                // mesh composer keys its texture lookup by (tile, glb, material); without
+                // this emit step the lookup falls back to the empty texture build and
+                // the global mesh ends up untextured.
+                Parallel.ForEach(globalMeshAccUsedByMaterial, parallelOpts, kv =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var (glbPath, matName) = kv.Key;
+                    var key = (globalSentinelTile, glbPath, matName);
+                    if (textureBuildByTileGlb.ContainsKey(key))
+                        return;
+
+                    if (!glbInfoByPath.TryGetValue(glbPath, out var info))
+                        return;
+
+                    var tc = new TextureBuildContext(
+                        glbPath,
+                        info.GlbStem,
+                        info.JsonPath,
+                        matName,
+                        new HashSet<WorldTileGrid.TileKey> { globalSentinelTile });
+
+                    var resolvedSources = ResolveFor(tc);
+                    if (resolvedSources == null)
+                    {
+                        textureBuildByTileGlb[key] = emptyTextureBuild;
+                        return;
+                    }
+
+                    if (tileFoldersCreated.TryAdd(cPresGlobalDir, 0))
+                        Directory.CreateDirectory(cPresGlobalDir);
+
+                    var textureBuild = GlbTextureAutoBuilder.EmitFullToTile(
+                        resolvedSources, cPresGlobalDir, textureDeduper,
+                        cancellationToken: cancellationToken);
+
+                    textureBuildByTileGlb[key] = textureBuild;
+                    LogBuildOutputs(textureBuild);
+                });
+
+                int globalChunkIndex = 0;
+                string globalHashPrefix = "mesh_cpres_global_";
+                string? globalMaterialOverride = (folderSuffix == "_proxy") ? "proxyworld.default" : null;
+                foreach (var input in globalMeshAcc.BuildChunkedMeshInputs(
+                    globalSentinelTile, textureBuildByTileGlb,
+                    maxMeshesPerPsg, maxVerticesPerMeshPsg, globalMaterialOverride, log))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (input == null) continue;
+
+                    string meshHash = Lookup8Hash.HashStringToHex(globalHashPrefix + globalChunkIndex);
+                    string meshOutPath = Path.Combine(cPresGlobalDir, meshHash + tileOptions.PsgExtension);
+
+                    var spec = tileOptions.TargetPlatform == ArenaPlatform.Xbox360
+                        ? MeshRX2Composer.Compose(input)
+                        : MeshPsgComposer.Compose(input);
+                    using (var fs = File.Create(meshOutPath))
+                        GeneralArenaBuilder.Write(spec, fs, tileOptions.TargetPlatform);
+                    log($"[Mesh PSG cPres_Global] {meshOutPath} ({input.Parts.Count} part(s))");
+                    Interlocked.Increment(ref createdCount);
+                    ThrowIfTooManyOutputs(createdCount, tileOptions);
+                    globalChunkIndex++;
+                }
+            }
         }
 
         // Phase 2: Emit collision (skip when cPres Only; output to cSim_Global when Global only, but create empty tile folders).
@@ -891,7 +855,7 @@ public static class TileBuildPipeline
                 };
 
                 string collisionHash = Lookup8Hash.HashStringToHex(globalOnly ? "collision_global_" + tile.U + "_" + tile.V : "collision_" + tile.U + "_" + tile.V);
-                string collisionOutPath = Path.Combine(collisionWriteDir, collisionHash + ".psg");
+                string collisionOutPath = Path.Combine(collisionWriteDir, collisionHash + tileOptions.PsgExtension);
 
                 var builder = new CollisionPsgBuilder
                 {
@@ -908,7 +872,7 @@ public static class TileBuildPipeline
                 bool wrote;
                 using (var mem = new MemoryStream())
                 {
-                    wrote = builder.Build(collisionInput, mem);
+                    wrote = builder.Build(collisionInput, mem, tileOptions.TargetPlatform);
                     if (wrote)
                     {
                         using var fs = File.Create(collisionOutPath);
@@ -981,8 +945,8 @@ public static class TileBuildPipeline
                         string wpHash = Lookup8Hash.HashStringToHex(
                             globalOnly ? "worldpainter_global_" + tile.U + "_" + tile.V
                                        : "worldpainter_" + tile.U + "_" + tile.V);
-                        string wpOutPath = Path.Combine(collisionWriteDir, wpHash + ".psg");
-                        WorldPainterPsgBuilder.WriteMinimal(wpOutPath, wpOptions);
+                        string wpOutPath = Path.Combine(collisionWriteDir, wpHash + tileOptions.PsgExtension);
+                        WorldPainterPsgBuilder.WriteMinimal(wpOutPath, wpOptions, tileOptions.TargetPlatform);
                         WriteWpQuadDebugJson(baseDir, tile.U, tile.V, wpRoot, tMinX, tMaxX, tMinZ, tMaxZ, wpDebugLayers, log);
                         log($"[WorldPainter PSG] {wpOutPath} · tile ({tile.U},{tile.V}) · root ({wpRoot.X:F1},{wpRoot.Y:F1}) · " +
                             (hasPaint
@@ -1019,7 +983,7 @@ public static class TileBuildPipeline
                         tileOptions.OriginY);
                     string navHash = Lookup8Hash.HashStringToHex(
                         globalOnly ? "navpower_global_" + tile.U + "_" + tile.V : "navpower_" + tile.U + "_" + tile.V);
-                    string navOutPath = Path.Combine(collisionWriteDir, navHash + ".psg");
+                    string navOutPath = Path.Combine(collisionWriteDir, navHash + tileOptions.PsgExtension);
                     string? dumpObjPrefix = null;
                     if (tileOptions.NavPower.DumpObjDir != null)
                         dumpObjPrefix = Path.Combine(tileOptions.NavPower.DumpObjDir, $"navdebug_{tile.U}_{tile.V}");
@@ -1033,7 +997,8 @@ public static class TileBuildPipeline
                             navOpts,
                             fallbackVerts: verts,
                             fallbackFaces: faces,
-                            dumpObjPrefix: dumpObjPrefix);
+                            dumpObjPrefix: dumpObjPrefix,
+                            platform: tileOptions.TargetPlatform);
                     }
                     else if (navUsePerTileWithSeams && navCollisionCache != null && tileOptions.NavPower.IncludeNeighborSeams)
                     {
@@ -1074,7 +1039,8 @@ public static class TileBuildPipeline
                             fallbackBucketMaxX: navMaxX,
                             fallbackBucketMinZ: navMinZ,
                             fallbackBucketMaxZ: navMaxZ,
-                            dumpObjPrefix: dumpObjPrefix);
+                            dumpObjPrefix: dumpObjPrefix,
+                            platform: tileOptions.TargetPlatform);
                     }
                     else
                     {
@@ -1087,7 +1053,8 @@ public static class TileBuildPipeline
                             navMinZ,
                             navMaxZ,
                             navOpts,
-                            dumpObjPrefix: dumpObjPrefix);
+                            dumpObjPrefix: dumpObjPrefix,
+                            platform: tileOptions.TargetPlatform);
                     }
 
                     log($"[NavPower PSG] {navOutPath}");
@@ -1100,11 +1067,313 @@ public static class TileBuildPipeline
                 log($"[WorldPainter] {wpEmitted} WP PSG(s) emitted, {wpSkipped} skipped ({wpCellOwner.Count} unique 128 m cell(s)).");
         }
 
+        // AIPath: scan the input folder for AIPNODE3 recording .bin files
+        // (produced by AIPathRecorder/recorder.py), detect them by magic, and
+        // emit one AIPath PSG per overlapping cSim tile -- same folder naming
+        // as the collision pipeline so the packing step picks them up
+        // automatically. .bin files that aren't AIPNODE3 (WorldPainter etc.)
+        // are silently skipped here.
+        int aipathPsgsWritten = 0;
+        if (!string.IsNullOrEmpty(wpDataFolder) && Directory.Exists(wpDataFolder))
+        {
+            aipathPsgsWritten = EmitAiPathPsgsFromBinFiles(
+                wpDataFolder, baseDir, tileOptions, folderSuffix,
+                log, cancellationToken);
+            Interlocked.Add(ref createdCount, aipathPsgsWritten);
+        }
+
+        // Irradiance: scan input folder for *.probes.json manifests produced by
+        // Documentation/skate3_irradiance_addon.py, bucket per cPres_X_Y_high tile,
+        // auto-thin to engine's 41×41 grid, emit one PSG per non-empty tile.
+        int irradiancePsgsWritten = 0;
+        if (!string.IsNullOrEmpty(wpDataFolder) && Directory.Exists(wpDataFolder))
+        {
+            irradiancePsgsWritten = EmitIrradiancePsgsFromProbeManifests(
+                wpDataFolder, baseDir, tileOptions, folderSuffix,
+                log, cancellationToken);
+            Interlocked.Add(ref createdCount, irradiancePsgsWritten);
+        }
+
         // Do not run TryCompactManagedHeap here: aggressive LOH compact can block the worker for
         // many minutes on huge maps and delays returning to the WinForms "Packing" step (user sees
         // "done" in spirit only after GC). Release caches only; call TryCompact at end of DIST flow.
         BuildMemory.ReleaseBuildWorkingSet(textureDeduper);
         log($"Done. Created {createdCount} PSG(s) in tile folders.");
+    }
+
+    /// <summary>
+    /// Scan <paramref name="inputDir"/> for AIPNODE3 .bin recordings and emit
+    /// one AIPath PSG per overlapping <c>cSim_X_Y_high</c> tile under
+    /// <paramref name="baseDir"/>. Non-AIPNODE3 .bin files (WorldPainter etc.)
+    /// are silently skipped after the magic-byte check.
+    /// </summary>
+    private static int EmitAiPathPsgsFromBinFiles(
+        string inputDir,
+        string baseDir,
+        TileBuildOptions tileOptions,
+        string folderSuffix,
+        Action<string> log,
+        CancellationToken cancellationToken)
+    {
+        string[] binPaths;
+        try
+        {
+            binPaths = Directory.GetFiles(inputDir, "*.bin", SearchOption.TopDirectoryOnly);
+        }
+        catch (Exception ex)
+        {
+            log($"[AIPath] Skipped .bin scan: {ex.Message}");
+            return 0;
+        }
+        if (binPaths.Length == 0)
+            return 0;
+
+        ReadOnlySpan<byte> AipnodeMagic = stackalloc byte[]
+            { (byte)'A', (byte)'I', (byte)'P', (byte)'N', (byte)'O', (byte)'D', (byte)'E', (byte)'3' };
+
+        int totalPsgs = 0;
+        foreach (var binPath in binPaths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Magic-byte sniff: skip anything that isn't AIPNODE3 (WorldPainter,
+            // legacy formats, anything else that just happens to use .bin).
+            byte[] head;
+            try
+            {
+                using var fs = File.OpenRead(binPath);
+                head = new byte[8];
+                int got = fs.Read(head, 0, 8);
+                if (got != 8) continue;
+            }
+            catch (Exception ex)
+            {
+                log($"[AIPath] {Path.GetFileName(binPath)}: cannot open ({ex.Message})");
+                continue;
+            }
+            if (!head.AsSpan().SequenceEqual(AipnodeMagic))
+                continue;
+
+            AiPathBinFile.File bin;
+            try
+            {
+                bin = AiPathBinFile.Read(binPath);
+            }
+            catch (Exception ex)
+            {
+                log($"[AIPath] {Path.GetFileName(binPath)}: read failed ({ex.Message})");
+                continue;
+            }
+
+            if (bin.Paths.Count == 0)
+            {
+                log($"[AIPath] {Path.GetFileName(binPath)}: zero paths -- skipped");
+                continue;
+            }
+
+            // Per-path world-XZ bboxes for tile bucketing.
+            var bboxes = new AiPathTileBucketer.Bbox[bin.Paths.Count];
+            for (int i = 0; i < bin.Paths.Count; i++)
+            {
+                var nodes = bin.Paths[i].Nodes;
+                bboxes[i] = AiPathTileBucketer.Bbox.FromPositions(
+                    Enumerable.Range(0, nodes.Count).Select(n => AiPathBinFile.ReadPos(nodes[n])));
+            }
+
+            // Use the same tile-size / origin the rest of the pipeline uses so
+            // AIPath cSim folder names line up byte-for-byte with the collision
+            // pipeline's cSim folders. Tile-center offset = origin + 0.5*size
+            // (Skate stock convention).
+            float tileSize         = tileOptions.TileSize;
+            float tileCenterOffset = tileOptions.OriginX + 0.5f * tileSize;
+            var buckets = AiPathTileBucketer.Bucket(bboxes, tileSize, tileCenterOffset);
+
+            int writtenForThisBin = 0;
+            foreach (var kv in buckets.OrderBy(k => k.Key.X).ThenBy(k => k.Key.Y))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var tileKey = kv.Key;
+                var indices = kv.Value;
+
+                // Convert AiPathTileBucketer's world-XZ tile center back to the
+                // pipeline's (U, V) tile index for matching folder names.
+                int u = (int)Math.Round((tileKey.X - tileOptions.OriginX) / tileSize - 0.5);
+                int v = (int)Math.Round((tileKey.Y - tileOptions.OriginY) / tileSize - 0.5);
+                string folderName = WorldTileGrid.BuildFolderName(
+                    TileBuildOptions.CSimPrefix,
+                    new WorldTileGrid.TileKey(u, v),
+                    tileOptions.TileSize, tileOptions.OriginX, tileOptions.OriginY,
+                    tileOptions.TileSuffix) + folderSuffix;
+
+                string tileDir = Path.Combine(baseDir, folderName);
+                Directory.CreateDirectory(tileDir);
+
+                // Subset the input file down to the paths in this tile.
+                var subset = new AiPathBinFile.File(
+                    bin.AllowedSkaters, bin.SkillLevel, bin.IsLoop, bin.NameStem,
+                    indices.Select(i => bin.Paths[i]).ToList().AsReadOnly());
+                // Tile key + source stem feed the TOC GUID so the per-tile PSGs
+                // each get a unique GUID even when path subsets overlap.
+                string tocSalt = $"{Path.GetFileNameWithoutExtension(binPath)}_{folderName}";
+                byte[] psg = AiPathPsgBuilder.BuildFromBin(subset, tocGuidSalt: tocSalt, platform: tileOptions.TargetPlatform);
+
+                // Content-hash filename per stock convention. Include the source
+                // .bin stem + tile key so each .bin gets its own per-tile PSG
+                // (multiple .bin recordings can coexist in the same tile dir).
+                string seed = $"aipath_{Path.GetFileNameWithoutExtension(binPath)}_{folderName}";
+                ulong hash = Lookup8Hash.HashString(seed);
+                string outPath = Path.Combine(tileDir, $"{hash:X16}{tileOptions.PsgExtension}");
+                File.WriteAllBytes(outPath, psg);
+                writtenForThisBin++;
+            }
+
+            log($"[AIPath] {Path.GetFileName(binPath)}: {bin.Paths.Count} path(s)  ·  "
+                + $"{buckets.Count} tile(s)  ·  wrote {writtenForThisBin} PSG(s)");
+            totalPsgs += writtenForThisBin;
+        }
+
+        return totalPsgs;
+    }
+
+    /// <summary>
+    /// Scan <paramref name="inputDir"/> for <c>*.probes.json</c> ProbeManifests and emit
+    /// one IrradianceData PSG per overlapping <c>cPres_X_Y_high</c> tile under
+    /// <paramref name="baseDir"/>. Tiles whose probe count exceeds the engine 1681 cap
+    /// are auto-thinned via <see cref="IrradianceProbeBucketer.DownsampleToEngineGrid"/>
+    /// (binned into the runtime 41×41 XZ SpatialGrid). Folder naming uses the same
+    /// (u,v) → world conversion as the rest of the pipeline so cPres folders line up
+    /// byte-for-byte with the mesh/texture pipeline.
+    /// </summary>
+    private static int EmitIrradiancePsgsFromProbeManifests(
+        string inputDir,
+        string baseDir,
+        TileBuildOptions tileOptions,
+        string folderSuffix,
+        Action<string> log,
+        CancellationToken cancellationToken)
+    {
+        string[] jsonPaths;
+        try
+        {
+            jsonPaths = Directory.GetFiles(inputDir, "*.probes.json", SearchOption.TopDirectoryOnly);
+        }
+        catch (Exception ex)
+        {
+            log($"[Irradiance] Skipped probes.json scan: {ex.Message}");
+            return 0;
+        }
+        if (jsonPaths.Length == 0)
+            return 0;
+
+        float tileSize         = tileOptions.TileSize;
+        float tileCenterOffset = tileOptions.OriginX + 0.5f * tileSize;
+
+        int totalPsgs = 0;
+        foreach (var jsonPath in jsonPaths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ProbeManifest manifest;
+            try
+            {
+                manifest = ProbeManifest.Load(jsonPath);
+            }
+            catch (Exception ex)
+            {
+                log($"[Irradiance] {Path.GetFileName(jsonPath)}: load failed ({ex.Message})");
+                continue;
+            }
+
+            var probes = manifest.ToProbes();
+            if (probes.Count == 0)
+            {
+                log($"[Irradiance] {Path.GetFileName(jsonPath)}: zero probes -- skipped");
+                continue;
+            }
+
+            // Bucket per pipeline tile (matches AIPath/mesh tile convention so cPres
+            // folder names line up byte-for-byte with the mesh pipeline output).
+            var buckets = new Dictionary<(int X, int Z), List<int>>(64);
+            for (int i = 0; i < probes.Count; i++)
+            {
+                int kx = (int)Math.Floor((probes[i].X - tileCenterOffset) / tileSize + 0.5f);
+                int kz = (int)Math.Floor((probes[i].Z - tileCenterOffset) / tileSize + 0.5f);
+                int tileX = (int)Math.Round(tileCenterOffset + kx * tileSize);
+                int tileZ = (int)Math.Round(tileCenterOffset + kz * tileSize);
+                var key = (tileX, tileZ);
+                if (!buckets.TryGetValue(key, out var list))
+                {
+                    list = new List<int>();
+                    buckets[key] = list;
+                }
+                list.Add(i);
+            }
+
+            string stem = Path.GetFileNameWithoutExtension(jsonPath);
+            if (stem.EndsWith(".probes", StringComparison.OrdinalIgnoreCase))
+                stem = stem.Substring(0, stem.Length - ".probes".Length);
+
+            int writtenForThisJson = 0;
+            int downsampledCount  = 0;
+            foreach (var kv in buckets.OrderBy(k => k.Key.X).ThenBy(k => k.Key.Z))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (tileX, tileZ) = kv.Key;
+                var indices = kv.Value;
+
+                var rawProbes = new List<Probe>(indices.Count);
+                for (int i = 0; i < indices.Count; i++) rawProbes.Add(probes[indices[i]]);
+
+                IReadOnlyList<Probe> tileProbes = rawProbes;
+                if (rawProbes.Count > IrradianceDataBuilder.MaxProbesPerAsset)
+                {
+                    tileProbes = IrradianceProbeBucketer.DownsampleToEngineGrid(
+                        rawProbes,
+                        new IrradianceProbeBucketer.TileKey(tileX, tileZ),
+                        IrradianceDataBuilder.MaxProbesPerAsset);
+                    downsampledCount++;
+                }
+
+                int u = (int)Math.Round((tileX - tileOptions.OriginX) / tileSize - 0.5);
+                int v = (int)Math.Round((tileZ - tileOptions.OriginY) / tileSize - 0.5);
+                string folderName = WorldTileGrid.BuildFolderName(
+                    TileBuildOptions.CPresPrefix,
+                    new WorldTileGrid.TileKey(u, v),
+                    tileOptions.TileSize, tileOptions.OriginX, tileOptions.OriginY,
+                    tileOptions.TileSuffix) + folderSuffix;
+
+                string tileDir = Path.Combine(baseDir, folderName);
+                Directory.CreateDirectory(tileDir);
+
+                string seed = $"irradiance_{stem}_{folderName}_n{tileProbes.Count}";
+                ulong tocGuid = Lookup8Hash.HashString(seed);
+                if (tocGuid == 0) tocGuid = 0x1000000000000001ul;
+
+                byte[] psg;
+                try
+                {
+                    psg = IrradiancePsgBuilder.Build(tileProbes, tocGuid, platform: tileOptions.TargetPlatform);
+                }
+                catch (Exception ex)
+                {
+                    log($"[Irradiance] {folderName}: build failed ({ex.Message})");
+                    continue;
+                }
+
+                string outPath = Path.Combine(tileDir, $"{tocGuid:X16}{tileOptions.PsgExtension}");
+                File.WriteAllBytes(outPath, psg);
+                writtenForThisJson++;
+            }
+
+            string suffix = downsampledCount > 0
+                ? $"  ·  {downsampledCount} tile(s) auto-thinned to 41×41 grid"
+                : "";
+            log($"[Irradiance] {Path.GetFileName(jsonPath)}: {probes.Count} probe(s)  ·  "
+                + $"{buckets.Count} tile(s)  ·  wrote {writtenForThisJson} PSG(s){suffix}");
+            totalPsgs += writtenForThisJson;
+        }
+
+        return totalPsgs;
     }
 
     private static void WriteWpQuadDebugJson(
@@ -1213,8 +1482,7 @@ public static class TileBuildPipeline
         /// </summary>
         public IEnumerable<IMeshPsgInput?> BuildChunkedMeshInputs(
             WorldTileGrid.TileKey tile,
-            IReadOnlyDictionary<(WorldTileGrid.TileKey Tile, string GlbPath), GlbTextureAutoBuilder.GlbTextureAutoBuildResult> textureBuildByTileGlb,
-            IReadOnlyDictionary<string, (string GlbStem, string? JsonPath, string MaterialName)> glbInfoByPath,
+            IReadOnlyDictionary<(WorldTileGrid.TileKey Tile, string GlbPath, string MaterialName), GlbTextureAutoBuilder.GlbTextureAutoBuildResult> textureBuildByTileGlb,
             int maxMeshesPerPsg,
             int maxVerticesPerPsg,
             string? materialOverride = null,
@@ -1249,27 +1517,6 @@ public static class TileBuildPipeline
             {
                 foreach (var split in MeshVertexFlattener.SplitByVertexBudget(part.Result, maxVerticesPerPsg))
                     budgetedParts.Add((split, part.GlbPath, part.GlbStem));
-            }
-
-            if (log != null)
-            {
-                long inTotal = 0;
-                long outTotal = 0;
-                bool hadWeldStats = false;
-                foreach (var p in budgetedParts)
-                {
-                    if (p.Result.WeldInputVertexCount is int inVerts && p.Result.WeldOutputVertexCount is int outVerts)
-                    {
-                        hadWeldStats = true;
-                        inTotal += inVerts;
-                        outTotal += outVerts;
-                    }
-                }
-                if (hadWeldStats)
-                {
-                    long merged = Math.Max(0, inTotal - outTotal);
-                    log($"[Mesh Weld] tile ({tile.U},{tile.V}): {inTotal} -> {outTotal} (merged {merged})");
-                }
             }
 
             int chunkIndex = 0;
@@ -1313,10 +1560,8 @@ public static class TileBuildPipeline
                     globalMin = Vector3.Min(globalMin, r.Bounds.Min);
                     globalMax = Vector3.Max(globalMax, r.Bounds.Max);
 
-                    var textureBuild = textureBuildByTileGlb.TryGetValue((tile, glbPath), out var tb) ? tb : emptyTextureBuild;
-                    string materialName = materialOverride ?? glbStem;
-                    if (materialOverride == null && glbInfoByPath.TryGetValue(glbPath, out var info))
-                        materialName = info.MaterialName;
+                    string materialName = materialOverride ?? r.MaterialName;
+                    var textureBuild = textureBuildByTileGlb.TryGetValue((tile, glbPath, r.MaterialName), out var tb) ? tb : emptyTextureBuild;
                     var overrides = textureBuild.HasOverrides
                         ? new RenderMaterialDataBuilder.MaterialTextureOverrides(
                             NameChannelGuid: textureBuild.DiffuseGuid,
@@ -1345,17 +1590,12 @@ public static class TileBuildPipeline
         }
     }
 
-    /// <param name="CTexFullTargets">
-    /// cTex full-res keys: union of split-mesh <see cref="WorldTileGrid.GetCTexTilesOverlappingAabbXY"/>
-    /// and <see cref="WorldTileGrid.AssignPresTilesToCTexCover"/> homes.
-    /// </param>
     private sealed record TextureBuildContext(
         string GlbPath,
         string GlbStem,
         string? JsonPath,
         string MaterialName,
-        HashSet<WorldTileGrid.TileKey> TilesUsed,
-        HashSet<WorldTileGrid.CTexTileKey> CTexFullTargets);
+        HashSet<WorldTileGrid.TileKey> TilesUsed);
 
     private readonly record struct SplitVertex(Vector3 Pos, Vector3 Normal, Vector2 Uv, Vector2 Uv1);
 
@@ -1397,67 +1637,6 @@ public static class TileBuildPipeline
 
         public MeshVertexFlattener.Result ToResult(string materialName)
         {
-            if (_indices.Count >= 3 && _positions.Count >= 3)
-            {
-                var sourceVerts = new List<Vector3>(_positions);
-                var sourceFaces = new List<(int, int, int)>(_indices.Count / 3);
-                for (int i = 0; i + 2 < _indices.Count; i += 3)
-                    sourceFaces.Add((_indices[i], _indices[i + 1], _indices[i + 2]));
-
-                float weldEpsilon = CollisionVertexWelder.ComputeAdaptiveEpsilon(sourceVerts);
-                var (weldedPositions, _, oldToWelded) =
-                    CollisionVertexWelder.WeldInPlaceWithRemap(sourceVerts, sourceFaces, weldEpsilon);
-                if (oldToWelded.Length != _positions.Count)
-                    throw new InvalidOperationException("Unexpected weld remap size for mesh tile.");
-
-                var outPositions = new List<Vector3>(_positions.Count);
-                var outNormals = new List<Vector3>(_positions.Count);
-                var outUvs = new List<Vector2>(_positions.Count);
-                var outUvs1 = _uvs1.Count > 0 ? new List<Vector2>(_positions.Count) : null;
-                var outIndices = new int[_indices.Count];
-                var outMap = new Dictionary<(int Rep, Vector3 N, Vector2 Uv, Vector2 Uv1), int>(_positions.Count);
-
-                int GetOrAddOutputVertex(int srcIndex)
-                {
-                    int rep = oldToWelded[srcIndex];
-                    var n = srcIndex < _normals.Count ? _normals[srcIndex] : Vector3.UnitY;
-                    var uv = srcIndex < _uvs.Count ? _uvs[srcIndex] : Vector2.Zero;
-                    var uv1 = srcIndex < _uvs1.Count ? _uvs1[srcIndex] : Vector2.Zero;
-                    var key = (rep, n, uv, uv1);
-                    if (outMap.TryGetValue(key, out int existing))
-                        return existing;
-                    int idx = outPositions.Count;
-                    outMap[key] = idx;
-                    outPositions.Add(weldedPositions[rep]);
-                    outNormals.Add(n);
-                    outUvs.Add(uv);
-                    outUvs1?.Add(uv1);
-                    return idx;
-                }
-
-                for (int i = 0; i < _indices.Count; i++)
-                    outIndices[i] = GetOrAddOutputVertex(_indices[i]);
-
-                Vector3 min = new(float.MaxValue, float.MaxValue, float.MaxValue);
-                Vector3 max = new(float.MinValue, float.MinValue, float.MinValue);
-                for (int i = 0; i < outPositions.Count; i++)
-                {
-                    min = Vector3.Min(min, outPositions[i]);
-                    max = Vector3.Max(max, outPositions[i]);
-                }
-
-                return new MeshVertexFlattener.Result(
-                    outPositions,
-                    outNormals,
-                    outUvs,
-                    outUvs1,
-                    outIndices,
-                    materialName,
-                    (min, max),
-                    WeldInputVertexCount: _positions.Count,
-                    WeldOutputVertexCount: outPositions.Count);
-            }
-
             return new MeshVertexFlattener.Result(
                 _positions.ToArray(),
                 _normals.ToArray(),
@@ -1551,7 +1730,7 @@ public static class TileBuildPipeline
                     $"tileSize={options.TileSize}, origin=({options.OriginX},{options.OriginY}).");
             }
 
-            // Hot-path: triangle fully contained in one tile, no clipping needed.
+            // Hot-path: triangle fully contained in one tile, no work needed.
             if (uMin == uMax && vMin == vMax)
             {
                 var key = new WorldTileGrid.TileKey(uMin, vMin);
@@ -1564,36 +1743,35 @@ public static class TileBuildPipeline
                 continue;
             }
 
-            for (int u = uMin; u <= uMax; u++)
+            // Multi-tile triangle: assign to ONE tile by XZ centroid (no clipping).
+            //
+            // The previous implementation clipped every multi-tile triangle at each tile boundary it
+            // crossed, emitting interpolated fragments to each tile's buffer. That copies original
+            // vertices into both adjacent tiles AND adds new interpolated boundary vertices, inflating
+            // total per-tile vertex count to 2-3x the source. Measured on a 150k-vert source map:
+            // tile (-1,-1) = 117k, tile (0,-1) = 122k, sum ~315k. Stock engine handles 5-20k verts/tile
+            // comfortably; 120k blows the RSX command FIFO during streaming and hangs render_thread
+            // on cellGcmSys_F80196C1's command-buffer-drain wait loop (see infinite-load investigation).
+            //
+            // Centroid assignment puts the whole triangle in one tile. A triangle whose centroid sits
+            // in tile A but extends into tile B is rendered only when A is loaded. Sk3 streams a 3x3
+            // tile window around the player so adjacent tiles are always co-resident; the small overhang
+            // is visible whenever the centroid tile is in view, which is the only time it matters.
+            // For exotic huge triangles spanning many tiles, MaxTilesPerTriangle (checked above) still
+            // catches pathological input.
+            float cX = (a.Pos.X + b.Pos.X + c.Pos.X) / 3f;
+            float cZ = (a.Pos.Z + b.Pos.Z + c.Pos.Z) / 3f;
+            var centroidTile = WorldTileGrid.GetTileForPoint(
+                new Vector3(cX, 0f, cZ),
+                options.TileSize,
+                options.OriginX,
+                options.OriginY);
+            if (!tileBuffers.TryGetValue(centroidTile, out var centroidBuffer))
             {
-                for (int v = vMin; v <= vMax; v++)
-                {
-                    if (((u - uMin) & 0x1F) == 0 && ((v - vMin) & 0x1F) == 0)
-                        cancellationToken.ThrowIfCancellationRequested();
-
-                    var tileBounds = WorldTileGrid.GetTileBoundsXY(
-                        new WorldTileGrid.TileKey(u, v),
-                        options.TileSize,
-                        options.OriginX,
-                        options.OriginY);
-                    var clipped = ClipTriangleToTile(
-                        a, b, c,
-                        tileBounds.MinX, tileBounds.MaxX,
-                        tileBounds.MinZ, tileBounds.MaxZ);
-                    if (clipped.Count < 3)
-                        continue;
-
-                    var key = new WorldTileGrid.TileKey(u, v);
-                    if (!tileBuffers.TryGetValue(key, out var buffer))
-                    {
-                        buffer = new TileGeometryBuffer();
-                        tileBuffers[key] = buffer;
-                    }
-
-                    for (int k = 1; k < clipped.Count - 1; k++)
-                        buffer.AddTriangle(clipped[0], clipped[k], clipped[k + 1]);
-                }
+                centroidBuffer = new TileGeometryBuffer();
+                tileBuffers[centroidTile] = centroidBuffer;
             }
+            centroidBuffer.AddTriangle(a, b, c);
         }
 
         if (tileBuffers.Count == 0)

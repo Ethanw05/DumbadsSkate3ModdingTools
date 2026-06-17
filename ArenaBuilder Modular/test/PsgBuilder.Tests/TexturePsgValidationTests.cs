@@ -1,4 +1,4 @@
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh;
 using ArenaBuilder.Core.Psg;
 using ArenaBuilder.Texture;
 using ArenaBuilder.Texture.Dds;
@@ -8,6 +8,8 @@ using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
 using System.Buffers.Binary;
 using System.Text;
+
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 
 namespace ArenaBuilder.Tests;
 
@@ -49,7 +51,7 @@ public sealed class TexturePsgValidationTests
         PsgArenaSpec spec = TexturePsgComposer.Compose(input, guid);
 
         using var ms = new MemoryStream();
-        GenericArenaWriter.Write(spec, ms);
+        GeneralArenaBuilder.Write(spec, ms, ArenaPlatform.Ps3);
         byte[] psg = ms.ToArray();
 
         Assert.True(psg.Length >= 0x200, "Texture PSG should have header + sections + objects + dict + payload");

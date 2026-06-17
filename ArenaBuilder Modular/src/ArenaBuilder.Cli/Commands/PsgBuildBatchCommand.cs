@@ -1,4 +1,5 @@
 using ArenaBuilder.Build;
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 using ArenaBuilder.Glb;
 using ArenaBuilder.NavPower;
 
@@ -25,17 +26,32 @@ internal static class PsgBuildBatchCommand
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        if (glbs.Length == 0)
+        // .bin files (AIPNODE3 recordings) are picked up by TileBuildPipeline
+        // alongside the GLB pass. Still run the build when only .bin files are
+        // present so a recordings-only folder doesn't short-circuit.
+        var bins = Directory.GetFiles(folder, "*.bin", SearchOption.TopDirectoryOnly);
+        if (glbs.Length == 0 && bins.Length == 0)
         {
-            Console.WriteLine("No .glb files found in the selected folder.");
+            Console.WriteLine("No .glb or .bin files found in the selected folder.");
             return 0;
         }
+        if (glbs.Length == 0)
+            Console.WriteLine($"No .glb files, but found {bins.Length} .bin file(s) -- running AIPath-only pass.");
 
         bool globalOnly = flags.Any(f => string.Equals(f, "--global-only", StringComparison.OrdinalIgnoreCase));
         bool cpresOnly = flags.Any(f => string.Equals(f, "--cpres-only", StringComparison.OrdinalIgnoreCase));
         bool proxy = flags.Any(f => string.Equals(f, "--proxy", StringComparison.OrdinalIgnoreCase));
         bool tiles = flags.Any(f => string.Equals(f, "--tiles", StringComparison.OrdinalIgnoreCase));
         bool emitNavPower = flags.Any(f => string.Equals(f, "--emit-navpower", StringComparison.OrdinalIgnoreCase));
+
+        // Platform: PS3 (.psg, default) or Xbox 360 (.rx2). --platform=xbox|ps3|360 or --xbox.
+        var platformFlag = flags.FirstOrDefault(f => f.StartsWith("--platform=", StringComparison.OrdinalIgnoreCase));
+        string? platformVal = platformFlag?["--platform=".Length..];
+        bool xbox = flags.Any(f => string.Equals(f, "--xbox", StringComparison.OrdinalIgnoreCase))
+                    || (platformVal != null && (platformVal.Equals("xbox", StringComparison.OrdinalIgnoreCase)
+                                                || platformVal.Equals("xbox360", StringComparison.OrdinalIgnoreCase)
+                                                || platformVal.Equals("360", StringComparison.OrdinalIgnoreCase)));
+        ArenaPlatform targetPlatform = xbox ? ArenaPlatform.Xbox360 : ArenaPlatform.Ps3;
 
         string? dumpNavObjDir = null;
         var dumpNavObjFlag = flags.FirstOrDefault(f => f.StartsWith("--dump-navobj=", StringComparison.OrdinalIgnoreCase));
@@ -48,6 +64,7 @@ internal static class PsgBuildBatchCommand
             CPresOnly = cpresOnly,
             FolderSuffix = proxy ? "_proxy" : "",
             EmitNavPower = emitNavPower,
+            TargetPlatform = targetPlatform,
             NavPower = new NavPowerBuildOptions
             {
                 DumpObjDir = dumpNavObjDir,

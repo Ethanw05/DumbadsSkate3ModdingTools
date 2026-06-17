@@ -50,7 +50,11 @@ internal static class NavPowerLegacyGraphSerializer
         uint flags1 = (((uint)(island << 7) & 0x00FFFF80u) | (uint)QuadEdgeCount);
         w.WriteUInt32(flags1);
         w.WriteUInt32(DefaultFlags2());
-        w.WriteUInt32(NavPowerBinaryConstants.RetailAreaFlags3GraphIndex);
+        // CCW quad edge ring (minX→maxZ→maxX→minZ faces): vert[2] is on the far side of the
+        // edge[0]→edge[1] base line, so basis_vert = 2 for every quad in this fallback path.
+        const uint QuadBasisVert = 2u;
+        w.WriteUInt32((QuadBasisVert << NavPowerBinaryConstants.Flags3BasisVertShift)
+            & NavPowerBinaryConstants.Flags3BasisVertMask);
 
         float y = pos.Y;
         // CCW winding in XZ: bottom-left -> bottom-right -> top-right -> top-left

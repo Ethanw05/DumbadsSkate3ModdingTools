@@ -1,8 +1,10 @@
 using ArenaBuilder.Core;
-using ArenaBuilder.Core.Platforms.PS3;
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh;
 using ArenaBuilder.Core.Psg;
 using System.Numerics;
+
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 
 namespace ArenaBuilder.NavPower;
 
@@ -48,7 +50,8 @@ public static class NavPowerPsgWriter
         float? fallbackBucketMaxX = null,
         float? fallbackBucketMinZ = null,
         float? fallbackBucketMaxZ = null,
-        string? dumpObjPrefix = null)
+        string? dumpObjPrefix = null,
+        ArenaPlatform platform = ArenaPlatform.Ps3)
     {
         if (string.IsNullOrWhiteSpace(outputPath))
             throw new ArgumentException("Output path is required.", nameof(outputPath));
@@ -117,7 +120,7 @@ public static class NavPowerPsgWriter
 
         Directory.CreateDirectory(Path.GetDirectoryName(fullPathEarly)!);
         using var fs = File.Create(fullPathEarly);
-        GenericArenaWriter.Write(spec, fs, fullPathEarly);
+        GeneralArenaBuilder.Write(spec, fs, platform, fullPathEarly);
     }
 
     /// <summary>
@@ -159,7 +162,8 @@ public static class NavPowerPsgWriter
         NavPowerBuildOptions? options = null,
         IReadOnlyList<Vector3>? fallbackVerts = null,
         IReadOnlyList<(int A, int B, int C)>? fallbackFaces = null,
-        string? dumpObjPrefix = null)
+        string? dumpObjPrefix = null,
+        ArenaPlatform platform = ArenaPlatform.Ps3)
     {
         if (string.IsNullOrWhiteSpace(outputPath))
             throw new ArgumentException("Output path is required.", nameof(outputPath));
@@ -174,10 +178,10 @@ public static class NavPowerPsgWriter
             tileMinX, tileMaxX, tileMinZ, tileMaxZ,
             dumpObjPrefix);
 
-        WritePsg(outputPath, objectBlob);
+        WritePsg(outputPath, objectBlob, platform);
     }
 
-    private static void WritePsg(string outputPath, byte[] objectBlob)
+    private static void WritePsg(string outputPath, byte[] objectBlob, ArenaPlatform platform = ArenaPlatform.Ps3)
     {
         string fullPathEarly = Path.GetFullPath(outputPath);
         ulong pathHash = Lookup8Hash.HashString(fullPathEarly);
@@ -216,6 +220,6 @@ public static class NavPowerPsgWriter
 
         Directory.CreateDirectory(Path.GetDirectoryName(fullPathEarly)!);
         using var fs = File.Create(fullPathEarly);
-        GenericArenaWriter.Write(spec, fs, fullPathEarly);
+        GeneralArenaBuilder.Write(spec, fs, platform, fullPathEarly);
     }
 }

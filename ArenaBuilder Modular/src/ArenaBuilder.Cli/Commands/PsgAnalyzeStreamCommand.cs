@@ -2,18 +2,16 @@ using ArenaBuilder.Core.Psg;
 using System.Buffers.Binary;
 using System.Text;
 
+using ArenaBuilder.Core.Platforms.PS3;
+
+using ArenaBuilder.Core.Platforms.Common;
+
 namespace ArenaBuilder.Cli.Commands;
 
 /// <summary>
-/// Walks a stream-root directory (e.g. a stock DLC dist), parses every <c>.psg</c> in every
-/// <c>cPres_*</c>/<c>cTex_*</c>/<c>cSim_*</c>/etc. tile folder, and produces a cross-reference
-/// of which texture/asset GUIDs are owned by which folder vs. referenced by which mesh.
-///
-/// <para>
-/// Used to empirically settle the question: in stock Skate 3 content, do meshes in cPres tiles
-/// reference texture GUIDs that live in cPres folders (community-claimed dual-tier model) or
-/// only in cTex folders (engine-design model)?
-/// </para>
+/// Walks a stream-root directory, parses every <c>.psg</c> in every <c>cPres_*</c>/<c>cSim_*</c>
+/// tile folder, and produces a cross-reference of which texture/asset GUIDs are owned by which
+/// folder vs. referenced by which mesh.
 ///
 /// <para><b>Parser scope</b></para>
 /// <list type="bullet">
@@ -150,7 +148,7 @@ internal static class PsgAnalyzeStreamCommand
     {
         public required string AbsolutePath { get; init; }
         public required string FolderName { get; init; }            // "cPres_50_50_high"
-        public required string StreamCategory { get; init; }        // "cPres" / "cTex" / "cSim" / "Other"
+        public required string StreamCategory { get; init; }        // "cPres" / "cSim" / "Other"
         public required string FileName { get; init; }              // "ABCD....psg"
         public required long FileSize { get; init; }
         public required IReadOnlyDictionary<uint, int> TypeCounts { get; init; }
@@ -225,12 +223,7 @@ internal static class PsgAnalyzeStreamCommand
     private static string ClassifyStreamCategory(string folderName)
     {
         if (folderName.StartsWith("cPres", StringComparison.OrdinalIgnoreCase)) return "cPres";
-        if (folderName.StartsWith("cTex", StringComparison.OrdinalIgnoreCase)) return "cTex";
         if (folderName.StartsWith("cSim", StringComparison.OrdinalIgnoreCase)) return "cSim";
-        if (folderName.StartsWith("cTrans", StringComparison.OrdinalIgnoreCase)) return "cTrans";
-        if (folderName.StartsWith("cWPL", StringComparison.OrdinalIgnoreCase)) return "cWPL";
-        if (folderName.StartsWith("cWPQuad", StringComparison.OrdinalIgnoreCase)) return "cWPQuad";
-        if (folderName.StartsWith("cAttr", StringComparison.OrdinalIgnoreCase)) return "cAttr";
         return "Other";
     }
 
@@ -431,35 +424,16 @@ internal static class PsgAnalyzeStreamCommand
             .ToDictionary(kv => kv.Key, kv => kv.Value);
 
         int totalTexGuids = texGuidOwners.Count;
-        int onlyCPres = 0, onlyCTex = 0, both = 0, neitherButOther = 0;
-        var multiOwnerExamples = new List<(ulong guid, List<GuidOwner> owners)>();
-
-        foreach (var (guid, owners) in texGuidOwners)
+        var byCategorySet = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (_, owners) in texGuidOwners)
         {
-            var cats = owners.Select(o => o.StreamCategory).Distinct().ToHashSet();
-            bool hasPres = cats.Contains("cPres");
-            bool hasTex = cats.Contains("cTex");
-            if (hasPres && hasTex) { both++; if (multiOwnerExamples.Count < sampleCount) multiOwnerExamples.Add((guid, owners)); }
-            else if (hasPres) onlyCPres++;
-            else if (hasTex) onlyCTex++;
-            else neitherButOther++;
+            var cats = owners.Select(o => o.StreamCategory).Distinct().OrderBy(c => c, StringComparer.Ordinal);
+            string key = string.Join("+", cats);
+            byCategorySet[key] = (byCategorySet.TryGetValue(key, out int v) ? v : 0) + 1;
         }
-
         Console.WriteLine($"Total distinct Texture-TOC GUIDs: {totalTexGuids}");
-        Console.WriteLine($"  Owned ONLY by cPres folders:   {onlyCPres,6}");
-        Console.WriteLine($"  Owned ONLY by cTex  folders:   {onlyCTex,6}");
-        Console.WriteLine($"  Owned by BOTH cPres + cTex:    {both,6}");
-        Console.WriteLine($"  Owned only by other categories:{neitherButOther,6}");
-        if (both > 0)
-        {
-            Console.WriteLine();
-            Console.WriteLine($"  -- Sample of {Math.Min(sampleCount, multiOwnerExamples.Count)} GUIDs owned by both cPres AND cTex --");
-            foreach (var (guid, owners) in multiOwnerExamples)
-            {
-                Console.WriteLine($"    GUID 0x{guid:X16}");
-                foreach (var o in owners) Console.WriteLine($"      [{o.StreamCategory}] {o.FolderName}/{o.FileName} tocType=0x{o.TocType:X8}");
-            }
-        }
+        foreach (var kv in byCategorySet.OrderByDescending(kv => kv.Value))
+            Console.WriteLine($"  Owned by {kv.Key,-30} : {kv.Value,6}");
         Console.WriteLine();
 
         // ─── C. Mesh material-channel-GUID resolution ──────────────────────
@@ -478,15 +452,13 @@ internal static class PsgAnalyzeStreamCommand
 
         // Counters scoped to cPres meshes (the ones whose resolution behavior we care about).
         int presTotal = 0;
-        int presSameFolder = 0;       // owner sits in the same cPres folder as the mesh
-        int presOtherCPres = 0;       // owner sits in a different cPres folder (no cTex owner)
-        int presOnlyCTex = 0;         // owner only in cTex (no cPres owner anywhere)
-        int presBothPresAndTex = 0;   // owner in both cPres (any folder) and cTex
-        int presOtherCategoryOnly = 0;// owner only in non-cPres / non-cTex (e.g. cWPL)
+        int presSameFolder = 0;
+        int presOtherCPres = 0;
+        int presOtherCategoryOnly = 0;
         int presUnresolved = 0;
 
         // Channel-name breakdown
-        var channelStats = new Dictionary<string, (int total, int resolved, int sameFolder, int crossCTex, int crossCPres, int unresolved)>(StringComparer.OrdinalIgnoreCase);
+        var channelStats = new Dictionary<string, (int total, int resolved, int sameFolder, int crossCPres, int unresolved)>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var (mesh, channel) in allMeshChannels)
         {
@@ -516,18 +488,14 @@ internal static class PsgAnalyzeStreamCommand
             if (sameFolder) st.sameFolder++;
 
             bool ownerHasCPres = cats.Contains("cPres");
-            bool ownerHasCTex = cats.Contains("cTex");
 
             if (isPresMesh)
             {
                 if (sameFolder) presSameFolder++;
-                else if (ownerHasCPres && ownerHasCTex) presBothPresAndTex++;
                 else if (ownerHasCPres) presOtherCPres++;
-                else if (ownerHasCTex) presOnlyCTex++;
                 else presOtherCategoryOnly++;
 
-                if (ownerHasCTex && !ownerHasCPres) st.crossCTex++;
-                else if (ownerHasCPres && !sameFolder) st.crossCPres++;
+                if (ownerHasCPres && !sameFolder) st.crossCPres++;
             }
 
             channelStats[nameKey] = st;
@@ -539,10 +507,8 @@ internal static class PsgAnalyzeStreamCommand
         Console.WriteLine();
         Console.WriteLine($"  cPres-mesh channel-GUID resolution (n={presTotal}):");
         Console.WriteLine($"    same cPres folder as the mesh           : {presSameFolder,7}");
-        Console.WriteLine($"    different cPres folder (no cTex owner)  : {presOtherCPres,7}");
-        Console.WriteLine($"    only in cTex (no cPres owner anywhere)  : {presOnlyCTex,7}");
-        Console.WriteLine($"    in BOTH some cPres + some cTex          : {presBothPresAndTex,7}");
-        Console.WriteLine($"    only in some other category (cWPL etc.) : {presOtherCategoryOnly,7}");
+        Console.WriteLine($"    different cPres folder                  : {presOtherCPres,7}");
+        Console.WriteLine($"    only in some other category              : {presOtherCategoryOnly,7}");
         Console.WriteLine($"    UNRESOLVED                              : {presUnresolved,7}");
         Console.WriteLine();
         Console.WriteLine("  Resolution-category histogram (which set of stream-categories own this GUID, all meshes):");
@@ -551,19 +517,15 @@ internal static class PsgAnalyzeStreamCommand
 
         Console.WriteLine();
         Console.WriteLine("  Per-channel-name breakdown:");
-        Console.WriteLine($"    {"channel",-32} {"total",7} {"resolved",9} {"sameFold",9} {"->cTex",8} {"->cPres",9} {"unresol",8}");
+        Console.WriteLine($"    {"channel",-32} {"total",7} {"resolved",9} {"sameFold",9} {"->cPres",9} {"unresol",8}");
         foreach (var kv in channelStats.OrderByDescending(k => k.Value.total))
         {
             var st = kv.Value;
-            Console.WriteLine($"    {Truncate(kv.Key, 32),-32} {st.total,7} {st.resolved,9} {st.sameFolder,9} {st.crossCTex,8} {st.crossCPres,9} {st.unresolved,8}");
+            Console.WriteLine($"    {Truncate(kv.Key, 32),-32} {st.total,7} {st.resolved,9} {st.sameFolder,9} {st.crossCPres,9} {st.unresolved,8}");
         }
         Console.WriteLine();
 
         // ─── E. Texture pixel-size distribution by stream category ─────────
-        // Settles the "small fallback in cPres / full in cTex" hypothesis: if it were true
-        // we'd see cPres-owned textures clustered at tiny sizes (16² / 32²) and cTex-owned
-        // textures at full sizes (256²+). If they overlap, then cPres just owns *unique*
-        // textures (lightmaps, mesh-local decals) at full resolution rather than fallbacks.
         Console.WriteLine("=== E. Texture pixel-size distribution by stream category ===");
         Console.WriteLine($"{"category",-8} {"count",6} {"min",10} {"median",10} {"p90",10} {"max",10} {"avgKB/PSG",10}");
         foreach (var g in infos.Where(i => i.Textures.Count > 0).GroupBy(i => i.StreamCategory).OrderByDescending(g => g.Count()))
@@ -593,28 +555,20 @@ internal static class PsgAnalyzeStreamCommand
                 perCat[info.StreamCategory] = perCat.TryGetValue(info.StreamCategory, out int c) ? c + 1 : 1;
             }
         }
-        Console.WriteLine($"    {"WxH",-12} {"cPres",7} {"cTex",7} {"total",7}");
+        Console.WriteLine($"    {"WxH",-12} {"cPres",7} {"total",7}");
         foreach (var kv in dimHist.OrderByDescending(k => k.Value.Values.Sum()).Take(20))
         {
             int cp = kv.Value.TryGetValue("cPres", out int p) ? p : 0;
-            int ct = kv.Value.TryGetValue("cTex", out int t2) ? t2 : 0;
             int tot = kv.Value.Values.Sum();
-            Console.WriteLine($"    {kv.Key.W}x{kv.Key.H,-8} {cp,7} {ct,7} {tot,7}");
+            Console.WriteLine($"    {kv.Key.W}x{kv.Key.H,-8} {cp,7} {tot,7}");
         }
         Console.WriteLine();
 
-        // ─── F. Per-GUID texture: who owns it, what size is it ────────────
-        // For every cross-file Texture GUID, list (a) which folder owns it and (b) the
-        // pixel dimensions of the Texture object inside that PSG. If small fallbacks exist
-        // we'd see GUIDs whose cPres-owner is small AND whose cTex-owner is large; with
-        // the "no overlap" finding from section B, this becomes a per-GUID size table.
-        Console.WriteLine("=== F. Sample Texture-GUID size table (cPres-owned vs cTex-owned) ===");
+        // ─── F. Per-GUID texture size table by stream category ────────────
+        Console.WriteLine("=== F. Sample Texture-GUID size table by stream category ===");
         var guidToSize = new Dictionary<ulong, (string cat, string folder, ushort w, ushort h, byte fmt, byte mips)>();
         foreach (var info in infos.Where(i => i.Kind == "Texture" && i.Textures.Count > 0))
         {
-            // Texture PSGs typically have ONE Texture object and the TOC entry whose objectPtr
-            // points to it. We index the FIRST texture per PSG and pair it with each Texture-typed
-            // TOC GUID that lives in this PSG (usually exactly one).
             var t = info.Textures[0];
             foreach (var entry in info.TocEntries.Where(e => e.TocType == TocTypeTexture))
             {
@@ -623,16 +577,15 @@ internal static class PsgAnalyzeStreamCommand
             }
         }
         var byCatGuids = guidToSize.GroupBy(kv => kv.Value.cat).ToDictionary(g => g.Key, g => g.ToList());
-        foreach (var cat in new[] { "cPres", "cTex" })
+        foreach (var (cat, list) in byCatGuids.OrderByDescending(kv => kv.Value.Count))
         {
-            if (!byCatGuids.TryGetValue(cat, out var list)) continue;
-            list = list.OrderByDescending(kv => (long)kv.Value.w * kv.Value.h).ToList();
-            Console.WriteLine($"  {cat}-owned texture GUIDs: {list.Count} total");
+            var ordered = list.OrderByDescending(kv => (long)kv.Value.w * kv.Value.h).ToList();
+            Console.WriteLine($"  {cat}-owned texture GUIDs: {ordered.Count} total");
             Console.WriteLine($"    largest 5:");
-            foreach (var (guid, info) in list.Take(5))
+            foreach (var (guid, info) in ordered.Take(5))
                 Console.WriteLine($"      0x{guid:X16} {info.w}x{info.h} fmt=0x{info.fmt:X2} mips={info.mips} in {info.folder}");
             Console.WriteLine($"    smallest 5:");
-            foreach (var (guid, info) in list.AsEnumerable().Reverse().Take(5))
+            foreach (var (guid, info) in ordered.AsEnumerable().Reverse().Take(5))
                 Console.WriteLine($"      0x{guid:X16} {info.w}x{info.h} fmt=0x{info.fmt:X2} mips={info.mips} in {info.folder}");
             Console.WriteLine();
         }

@@ -35,6 +35,11 @@ public sealed class BlenroseMaterialsDb
         /// When true, tile cPres/presentation accumulation skips triangles that use this material (BlenRose export).
         /// </summary>
         public bool ExcludePres { get; init; }
+        /// <summary>
+        /// When true, triangles using this material are NOT split across per-tile cPres folders; instead the
+        /// entire primitive is routed into a single cPres_Global mesh PSG (BlenRose export).
+        /// </summary>
+        public bool IncludeInCpresGlobal { get; init; }
         public List<Spline>? Splines { get; init; }
     }
 
@@ -62,6 +67,8 @@ public sealed class BlenroseMaterialsDb
                 && exclEl.ValueKind == JsonValueKind.True;
             bool excludePres = root.TryGetProperty("exclude_pres", out var exclPresEl)
                 && exclPresEl.ValueKind == JsonValueKind.True;
+            bool includeInCpresGlobal = root.TryGetProperty("include_in_cpres_global", out var inclGlobalEl)
+                && inclGlobalEl.ValueKind == JsonValueKind.True;
 
             List<Spline>? splines = null;
             if (root.TryGetProperty("splines", out var splinesEl) && splinesEl.ValueKind == JsonValueKind.Array)
@@ -90,6 +97,7 @@ public sealed class BlenroseMaterialsDb
                 Collision = new CollisionInfo { PhysicsSurface = physics, AudioSurface = audio, SurfacePattern = pattern },
                 ExcludeCollision = excludeCollision,
                 ExcludePres = excludePres,
+                IncludeInCpresGlobal = includeInCpresGlobal,
                 Splines = splines
             };
         }

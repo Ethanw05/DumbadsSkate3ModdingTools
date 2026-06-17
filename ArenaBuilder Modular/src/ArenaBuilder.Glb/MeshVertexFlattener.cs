@@ -6,9 +6,8 @@ namespace ArenaBuilder.Glb;
 
 /// <summary>
 /// Flattens a GLB mesh for mesh PSG. First mesh, first primitive.
-/// Uses vertex welding so vertex count stays ≤ 65536 (uint16 index limit for Noesis/game).
-/// Extraction logic applies node world transforms before welding so tiling
-/// and bounds operate in consistent world space, including mesh instances.
+/// Vertices are emitted 1:1 with the GLB's vertex buffer — no welding/merging.
+/// Node world transforms are applied so tiling and bounds operate in world space.
 /// </summary>
 public static class MeshVertexFlattener
 {
@@ -19,9 +18,7 @@ public static class MeshVertexFlattener
         IReadOnlyList<Vector2>? Uvs1,
         IReadOnlyList<int> Indices,
         string MaterialName,
-        (Vector3 Min, Vector3 Max) Bounds,
-        int? WeldInputVertexCount = null,
-        int? WeldOutputVertexCount = null);
+        (Vector3 Min, Vector3 Max) Bounds);
 
     /// <summary>
     /// Flattens first mesh, first primitive only. Used by single-GLB mesh PSG (e.g. MeshInputFromGlb).
@@ -308,46 +305,37 @@ public static class MeshVertexFlattener
         if (uvs1 == null || uvs1.Length < positions.Length)
             uvs1 = null;
 
-        // Welded extraction: same vertex (pos+normal+uv+uv1) = same index. Keeps count ≤ 65536 for uint16 indices.
-        // Capacity hints: output vertex count is bounded by positions.Length (welding only ever
-        // reduces). Without hints these lists grow by re-doubling — 16+ realloc+copy cycles per
-        // mesh at 65k vertices. Same for the dedup dictionary (avoids rebucketing). The index
-        // list is exactly indices.Length entries.
+        // 1:1 emission — no welding/merging. Each GLB vertex slot becomes one output vertex,
+        // transformed into world space. Input indices already reference these slots, so they
+        // pass through unchanged (modulo the winding flip applied above for negative-determinant
+        // transforms).
         int posCount = positions.Length;
         int idxCount = indices.Length;
-        var indexMap = new Dictionary<VertKey, int>(posCount);
         var outPos = new List<Vector3>(posCount);
         var outNorm = new List<Vector3>(posCount);
         var outUv = new List<Vector2>(posCount);
         var outUv1 = uvs1 != null ? new List<Vector2>(posCount) : null;
-        var outIdx = new List<int>(idxCount);
 
-        for (int i = 0; i < indices.Length; i++)
+        for (int vi = 0; vi < posCount; vi++)
         {
-            if ((i & 0xFFF) == 0)
+            if ((vi & 0xFFF) == 0)
                 cancellationToken.ThrowIfCancellationRequested();
 
-            int vi = indices[i];
             var p = positions[vi];
             var n = normals != null && vi < normals.Length ? normals[vi] : Vector3.UnitY;
             var u = uvs != null && vi < uvs.Length ? uvs[vi] : Vector2.Zero;
-            var u1 = uvs1 != null && vi < uvs1.Length ? uvs1[vi] : u;
-            var key = new VertKey(p, n, u, u1);
-            if (!indexMap.TryGetValue(key, out int newIdx))
-            {
-                newIdx = outPos.Count;
-                indexMap[key] = newIdx;
-                outPos.Add(Vector3.Transform(p, world));
-                outNorm.Add(Vector3.Normalize(TransformNormal(n, world)));
-                outUv.Add(u);
-                if (outUv1 != null)
-                    outUv1.Add(u1);
-            }
-            outIdx.Add(newIdx);
+            outPos.Add(Vector3.Transform(p, world));
+            outNorm.Add(Vector3.Normalize(TransformNormal(n, world)));
+            outUv.Add(u);
+            if (outUv1 != null && uvs1 != null)
+                outUv1.Add(vi < uvs1.Length ? uvs1[vi] : u);
         }
 
+        var outIdx = new List<int>(idxCount);
+        for (int i = 0; i < indices.Length; i++) outIdx.Add(indices[i]);
+
         if (enforceVertexLimit && outPos.Count > MaxVerticesPerChunk)
-            throw new InvalidOperationException($"Mesh has {outPos.Count} unique vertices; PSG uint16 indices support max 65536. Consider simplifying the mesh.");
+            throw new InvalidOperationException($"Mesh has {outPos.Count} vertices; PSG uint16 indices support max 65536. Consider simplifying the mesh.");
 
         var min = new Vector3(float.MaxValue);
         var max = new Vector3(float.MinValue);
@@ -437,30 +425,7 @@ public static class MeshVertexFlattener
         return copy;
     }
 
-    private readonly struct VertKey : IEquatable<VertKey>
-    {
-        private readonly Vector3 _p;
-        private readonly Vector3 _n;
-        private readonly Vector2 _u;
-        private readonly Vector2 _u1;
-
-        public VertKey(Vector3 p, Vector3 n, Vector2 u, Vector2 u1)
-        {
-            _p = p;
-            _n = n;
-            _u = u;
-            _u1 = u1;
-        }
-
-        public bool Equals(VertKey other) =>
-            _p.Equals(other._p) && _n.Equals(other._n) && _u.Equals(other._u) && _u1.Equals(other._u1);
-
-        public override bool Equals(object? obj) => obj is VertKey other && Equals(other);
-
-        public override int GetHashCode() => HashCode.Combine(_p, _n, _u, _u1);
-    }
-
-    private static Vector3[] GenerateDefaultNormals(Vector3[] positions, int[] indices)
+private static Vector3[] GenerateDefaultNormals(Vector3[] positions, int[] indices)
     {
         var normals = new Vector3[positions.Length];
         for (int i = 0; i < indices.Length; i += 3)

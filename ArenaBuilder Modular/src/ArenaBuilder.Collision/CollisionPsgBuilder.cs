@@ -1,5 +1,7 @@
 using ArenaBuilder.Core.Psg;
 
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
+
 namespace ArenaBuilder.Collision;
 
 /// <summary>
@@ -24,7 +26,7 @@ public sealed class CollisionPsgBuilder
     /// decide whether to delete/skip the output path without leaving a zero-byte corrupt PSG on disk. This
     /// method never throws for empty input — that guarantee is what lets long tile batch exports keep going.
     /// </summary>
-    public bool Build(ICollisionInput input, Stream output)
+    public bool Build(ICollisionInput input, Stream output, ArenaPlatform platform = ArenaPlatform.Ps3)
     {
         PsgArenaSpec? spec = CollisionPsgComposer.Compose(
             input,
@@ -34,7 +36,7 @@ public sealed class CollisionPsgBuilder
             WeldVerticesBeforeClustering);
         if (spec == null)
             return false;
-        GenericArenaWriter.Write(spec, output);
+        GeneralArenaBuilder.Write(spec, output, platform);
         return true;
     }
 }

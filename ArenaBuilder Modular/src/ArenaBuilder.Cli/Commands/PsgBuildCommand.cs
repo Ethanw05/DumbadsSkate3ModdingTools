@@ -1,10 +1,12 @@
 using ArenaBuilder.Collision;
 using ArenaBuilder.Core;
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh;
 using ArenaBuilder.Core.Psg;
 using ArenaBuilder.Glb;
 using ArenaBuilder.Mesh;
 using ArenaBuilder.Texture;
+
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 
 namespace ArenaBuilder.Cli.Commands;
 
@@ -102,7 +104,7 @@ internal static class PsgBuildCommand
 
             var spec = MeshPsgComposer.Compose(input);
             using (var fs = File.Create(outPath))
-                GenericArenaWriter.Write(spec, fs);
+                GeneralArenaBuilder.Write(spec, fs, ArenaPlatform.Ps3);
             return 0;
         }
         catch (Exception ex)
@@ -167,11 +169,8 @@ internal static class PsgBuildCommand
 
     private static string GetDefaultTextureOutDir(string glbPath)
     {
-        // Standalone single-GLB build is essentially "GlobalOnly" — the full-resolution textures
-        // land alongside the mesh PSG in cPres_Global as one self-contained collection. The dual-
-        // tier (small-cPres + full-cTex) scheme used by the tiled pipeline does not apply here:
-        // there are no streaming tiles to coordinate, so all textures are full-resolution and live
-        // with the mesh.
+        // Standalone single-GLB build: full-resolution textures land alongside the mesh PSG in
+        // cPres_Global as one self-contained collection.
         var dir = Path.GetDirectoryName(Path.GetFullPath(glbPath)) ?? ".";
         return Path.Combine(dir, TileBuildOptions.CPresGlobalFolder);
     }

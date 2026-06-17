@@ -1,4 +1,4 @@
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh;
 
 namespace ArenaBuilder.Mesh;
 
@@ -24,7 +24,7 @@ public interface IMeshPsgInput
     string MaterialName { get; }
     /// <summary>Optional. When set, material channels use these GUIDs (single-material mode).</summary>
     RenderMaterialDataBuilder.MaterialTextureOverrides? TextureChannelOverrides { get; }
-    /// <summary>AttributorMaterialName stream path (single-material mode). Null = "environmentsimple.default".</summary>
+    /// <summary>AttributorMaterialName stream path (single-material mode). Null = <see cref="RenderMaterialDataBuilder.DefaultAttributorStream"/> ("environment.default").</summary>
     string? AttributorMaterialPath => null;
 
     /// <summary>When set (single-material mode), only these channels are built (from BlenRose JSON).</summary>

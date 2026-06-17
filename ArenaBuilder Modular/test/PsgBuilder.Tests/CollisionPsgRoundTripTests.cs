@@ -1,5 +1,5 @@
 using ArenaBuilder.Collision;
-using ArenaBuilder.Core.Platforms.PS3;
+using ArenaBuilder.Core.Platforms.Common;
 using ArenaBuilder.Core.Psg;
 using System.Numerics;
 

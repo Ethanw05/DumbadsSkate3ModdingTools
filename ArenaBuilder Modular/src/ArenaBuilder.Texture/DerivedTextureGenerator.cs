@@ -40,10 +40,18 @@ public static class DerivedTextureGenerator
         MaxHeight: 256,
         MinTangentSpaceZ: 0.43f);
 
-    private const float SpecularStrength = 0.18f;
     private const float SpecularMean = 1f;
     private const float SpecularRange = 1f;
+
+    // Peak specular strength, reached at roughness 0 (mirror-smooth). The autogen
+    // map intensity is diffuseLuma * strength, where strength scales linearly with
+    // (1 - roughness): roughness 0 => 0.25, roughness 1 => 0 (fully matte).
     private const float SpecularMax = 0.25f;
+
+    // Roughness used when no per-material roughness is supplied (no BlenRose JSON,
+    // standalone CLI, tests). 0.28 reproduces the legacy fixed 0.18 strength under
+    // the linear-inverse mapping: 0.25 * (1 - 0.28) == 0.18.
+    public const float DefaultAutogenRoughness = 0.28f;
 
     /// <summary>
     /// Creates a tangent-space normal map PNG from a source image using a Sobel kernel.
@@ -194,12 +202,29 @@ public static class DerivedTextureGenerator
     }
 
     /// <summary>
-    /// Creates a grayscale specular map PNG from a source image using
-    /// mean/range linear falloff (NormalMap-Online default style).
+    /// Creates a grayscale specular map PNG from a source image using the default
+    /// autogen roughness (<see cref="DefaultAutogenRoughness"/>). Used by callers
+    /// that have no per-material roughness (standalone CLI, tests, byte-feed path).
     /// </summary>
     public static byte[] GenerateSpecularMapPngFromImage(byte[] encodedImageBytes)
+        => GenerateSpecularMapPngFromImage(encodedImageBytes, DefaultAutogenRoughness);
+
+    /// <summary>
+    /// Creates a grayscale specular map PNG from a source image using mean/range
+    /// linear falloff (NormalMap-Online default style). The peak strength scales
+    /// linearly with (1 - <paramref name="roughness"/>) so the BlenRose/Principled
+    /// BSDF Roughness slider drives how shiny the autogen specular is: roughness 0
+    /// => full <see cref="SpecularMax"/>, roughness 1 => fully matte (no specular).
+    /// </summary>
+    /// <param name="roughness">Material roughness in [0,1]; values outside are clamped.</param>
+    public static byte[] GenerateSpecularMapPngFromImage(byte[] encodedImageBytes, float roughness)
     {
-        string cacheKey = BuildCacheKey(encodedImageBytes, "specular");
+        if (float.IsNaN(roughness))
+            roughness = DefaultAutogenRoughness;
+        roughness = Math.Clamp(roughness, 0f, 1f);
+        float specularStrength = SpecularMax * (1f - roughness);
+
+        string cacheKey = BuildCacheKey(encodedImageBytes, "specular", roughness: roughness);
         if (DerivedPngCache.TryGetValue(cacheKey, out var cachedSpecular))
             return cachedSpecular;
 
@@ -216,7 +241,7 @@ public static class DerivedTextureGenerator
             {
                 float height = heightLuma[row + x];
                 float pctDistanceToMean = (SpecularRange - MathF.Abs(height - SpecularMean)) / SpecularRange;
-                float intensity = MathF.Max(0f, pctDistanceToMean) * SpecularStrength;
+                float intensity = MathF.Max(0f, pctDistanceToMean) * specularStrength;
                 intensity = MathF.Min(intensity, SpecularMax);
 
                 byte v = ToByte(intensity);
@@ -343,7 +368,7 @@ public static class DerivedTextureGenerator
         return (byte)MathF.Round(clamped * 255f);
     }
 
-    private static string BuildCacheKey(byte[] encodedImageBytes, string mode, NormalSynthSettings? normalSettings = null)
+    private static string BuildCacheKey(byte[] encodedImageBytes, string mode, NormalSynthSettings? normalSettings = null, float roughness = float.NaN)
     {
         // xxHash128 — non-cryptographic process-local cache key. Replaced
         // SHA256 (~10-20x faster on multi-MB image buffers; we hash the
@@ -358,7 +383,7 @@ public static class DerivedTextureGenerator
             "normal" => normalSettings.HasValue
                 ? $"normal|{normalSettings.Value.Strength}|{normalSettings.Value.Level}|{normalSettings.Value.BlurSharp}|{normalSettings.Value.MaxWidth}|{normalSettings.Value.MaxHeight}|{normalSettings.Value.MinTangentSpaceZ}|{hashHex}"
                 : $"normal|{DefaultNormalSettings.Strength}|{DefaultNormalSettings.Level}|{DefaultNormalSettings.BlurSharp}|{DefaultNormalSettings.MaxWidth}|{DefaultNormalSettings.MaxHeight}|{DefaultNormalSettings.MinTangentSpaceZ}|{hashHex}",
-            "specular" => $"specular|{SpecularStrength}|{SpecularMean}|{SpecularRange}|{SpecularMax}|{hashHex}",
+            "specular" => $"specular|{roughness}|{SpecularMean}|{SpecularRange}|{SpecularMax}|{hashHex}",
             _ => $"{mode}|{hashHex}"
         };
     }

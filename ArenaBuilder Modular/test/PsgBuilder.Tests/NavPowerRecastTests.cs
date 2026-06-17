@@ -1,4 +1,4 @@
-using ArenaBuilder.Core.Platforms.PS3;
+using ArenaBuilder.Core.Platforms.Common;
 using ArenaBuilder.Core.Psg;
 using ArenaBuilder.NavPower;
 using System.Numerics;
@@ -286,10 +286,12 @@ public sealed class NavPowerRecastTests
     }
 
     [Fact]
-    public void RecastPath_Flags3GraphIndexIs512()
+    public void RecastPath_Flags3CarriesBasisVert()
     {
-        // Retail: GRAPH_INDEX in flags3 bits[16-29] is commonly 512 (see DIST_University parses).
-        const int ExpectedGraphIndex = 512;
+        // Sk3 v23 layout: flags3 bits[24-30] = BASIS_VERT (NOT GRAPH_INDEX as in modern NavPower SDK).
+        // EBOOT sub_9B9F88 reads (flags3 >> 24) & 0x7F as the edge index for surface-normal calc.
+        // basis_vert is always >= 2 (CalcBasisVert returns 2..verts.Length-1).
+        // Lower bits 0-23 of flags3 must be 0 (no SEARCH_INDEX / low GRAPH_INDEX bits used by Sk3).
         var (_, navPowerBlob) = BuildAndExtract();
         var (areaStream, areaCount) = ParseAreaStream(navPowerBlob);
 
@@ -302,8 +304,10 @@ public sealed class NavPowerRecastTests
             int ec = (int)(flags1 & 0x7Fu);
             if (ec == 0) break;
             uint flags3 = ReadBigEndianU32(areaStream, off + 48);
-            int graphIndex = (int)((flags3 & 0x3FFF0000u) >> 16);
-            Assert.Equal(ExpectedGraphIndex, graphIndex);
+            int basisVert = (int)((flags3 >> 24) & 0x7F);
+            Assert.True(basisVert >= 2 && basisVert < ec,
+                $"Area at offset {off}: basisVert={basisVert} not in [2, ec={ec})");
+            Assert.Equal(0u, flags3 & 0x00FFFFFFu);
             off += 52 + 24 * ec;
         }
     }
@@ -331,8 +335,12 @@ public sealed class NavPowerRecastTests
     }
 
     [Fact]
-    public void RecastPath_BasisVertIsAtLeast2()
+    public void RecastPath_Flags2HasNoBasisVertBits()
     {
+        // Sk3 v23 layout: flags2 carries USAGE_COUNT + LAYER_INDEX only. BASIS_VERT moved to flags3.
+        // Modern NavPower SDK puts basis_vert at flags2[24-30]; Sk3 EBOOT ignores those bits.
+        // Writing basis_vert to both fields (the old bug) was harmless for flags2 but left flags3
+        // hardcoded at basis=2 for every area.
         var (_, navPowerBlob) = BuildAndExtract();
         var (areaStream, areaCount) = ParseAreaStream(navPowerBlob);
 
@@ -345,9 +353,8 @@ public sealed class NavPowerRecastTests
             int ec = (int)(flags1 & 0x7Fu);
             if (ec == 0) break;
             uint flags2 = ReadBigEndianU32(areaStream, off + 44);
-            int basisVert = (int)((flags2 >> 24) & 0x7F);
-            Assert.True(basisVert >= 2,
-                $"Area at offset {off}: basisVert={basisVert} < 2 (required by bfxCollider.cpp:1201)");
+            int flags2BasisField = (int)((flags2 >> 24) & 0x7F);
+            Assert.Equal(0, flags2BasisField);
             off += 52 + 24 * ec;
         }
     }

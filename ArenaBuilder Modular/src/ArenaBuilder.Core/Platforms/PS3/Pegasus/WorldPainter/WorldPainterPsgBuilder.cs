@@ -1,5 +1,11 @@
-using ArenaBuilder.Core.Platforms.PS3.Pegasus.Mesh;
+using ArenaBuilder.Core.Platforms.Common.Pegasus.Mesh;
 using ArenaBuilder.Core.Psg;
+
+using ArenaBuilder.Core.Platforms.Common.Pegasus.WorldPainter;
+
+using ArenaBuilder.Core.Platforms.Common;
+
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
 
 namespace ArenaBuilder.Core.Platforms.PS3.Pegasus.WorldPainter;
 
@@ -180,7 +186,7 @@ public static class WorldPainterPsgBuilder
         };
     }
 
-    public static void WriteMinimal(string outputPath, WorldPainterPsgBuildOptions? options = null)
+    public static void WriteMinimal(string outputPath, WorldPainterPsgBuildOptions? options = null, ArenaPlatform platform = ArenaPlatform.Ps3)
     {
         if (string.IsNullOrWhiteSpace(outputPath))
             throw new ArgumentException("Output path is required.", nameof(outputPath));
@@ -190,7 +196,7 @@ public static class WorldPainterPsgBuilder
 
         var spec = ComposeMinimal(options);
         using var fs = File.Create(fullPath);
-        GenericArenaWriter.Write(spec, fs, fullPath);
+        GeneralArenaBuilder.Write(spec, fs, platform, fullPath);
     }
 
     private static ulong BuildDeterministicTocAssetGuid(uint arenaId, ulong layerGuid, uint objectPtr, string? salt)

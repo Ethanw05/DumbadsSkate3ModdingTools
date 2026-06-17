@@ -3,6 +3,8 @@ using ArenaBuilder.Texture;
 using ArenaBuilder.Texture.Dds;
 using System.Globalization;
 
+using ArenaBuilder.Core.Platforms.Common.PsgFormat;
+
 namespace ArenaBuilder.Cli.Commands;
 
 /// <summary>
@@ -16,14 +18,22 @@ internal static class PsgBuildTexturesCommand
         bool generateMipMaps = !args.Any(a => a.Equals("--no-mips", StringComparison.OrdinalIgnoreCase));
         bool hasAlpha = args.Any(a => a.Equals("--alpha", StringComparison.OrdinalIgnoreCase) || a.Equals("--dxt5", StringComparison.OrdinalIgnoreCase));
         string? guidArg = GetOptionValue(args, "--guid=");
+
+        // Platform: PS3 (.psg, default) or Xbox 360 (.rx2). Accept --platform=xbox|ps3|360 and --xbox.
+        string? platformArg = GetOptionValue(args, "--platform=");
+        bool xbox = args.Any(a => a.Equals("--xbox", StringComparison.OrdinalIgnoreCase) || a.Equals("--rx2", StringComparison.OrdinalIgnoreCase))
+                    || (platformArg != null && (platformArg.Equals("xbox", StringComparison.OrdinalIgnoreCase)
+                                                || platformArg.Equals("xbox360", StringComparison.OrdinalIgnoreCase)
+                                                || platformArg.Equals("360", StringComparison.OrdinalIgnoreCase)));
+
         var positional = args.Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToArray();
         if (positional.Length is < 1 or > 2)
-            return CliErrors.Fail("Usage: psg-build-textures <input.{dds|png|jpg|jpeg}> [output.psg] [--guid=0xGUID] [--no-mips] [--alpha]");
+            return CliErrors.Fail("Usage: psg-build-textures <input.{dds|png|jpg|jpeg}> [output.{psg|rx2}] [--platform=xbox] [--guid=0xGUID] [--no-mips] [--alpha]");
 
         string inputPath = positional[0];
         string outPath = positional.Length == 2
             ? positional[1]
-            : GetDefaultTextureOutPath(inputPath);
+            : GetDefaultTextureOutPath(inputPath, xbox);
 
         if (!File.Exists(inputPath))
             return CliErrors.Fail($"Input file not found: {inputPath}");
@@ -78,21 +88,28 @@ internal static class PsgBuildTexturesCommand
             textureGuid = TextureGuidStrategy.KeyToGuid(textureKey);
         }
 
+        if (xbox)
+        {
+            TextureRX2Composer.Write(ddsInput, textureGuid, outPath);
+            Console.WriteLine($"Wrote X360 texture arena: {outPath} (GUID 0x{textureGuid:X16})");
+            return 0;
+        }
+
         var spec = TexturePsgComposer.Compose(ddsInput, textureGuid);
         using (var fs = File.Create(outPath))
-            GenericArenaWriter.Write(spec, fs);
+            GeneralArenaBuilder.Write(spec, fs, ArenaPlatform.Ps3);
 
         Console.WriteLine($"Wrote texture PSG: {outPath} (GUID 0x{textureGuid:X16})");
         return 0;
     }
 
-    private static string GetDefaultTextureOutPath(string ddsPath)
+    private static string GetDefaultTextureOutPath(string ddsPath, bool xbox)
     {
         var dir = Path.GetDirectoryName(Path.GetFullPath(ddsPath)) ?? ".";
         string stem = Path.GetFileNameWithoutExtension(ddsPath);
         string textureKey = TextureGuidStrategy.BuildTextureKey(stem, stem, "diffuse", stem);
         ulong guid = TextureGuidStrategy.KeyToGuid(textureKey);
-        return Path.Combine(dir, $"{guid:X16}.psg");
+        return Path.Combine(dir, $"{guid:X16}.{(xbox ? "rx2" : "psg")}");
     }
 
     private static bool TryParseGuidHex(string value, out ulong guid)
